@@ -62,6 +62,11 @@ client.on("disconnected", (reason) => {
 client.on("message", async (msg) => {
   // Ignorar mensajes de grupos
   if (msg.from.includes("@g.us")) return;
+  // Ignorar estados y broadcasts
+  if (msg.from.includes("@broadcast")) return;
+  if (msg.from === "status@broadcast") return;
+  if (msg.type === "e2e_notification") return;
+  if (msg.type === "notification_template") return;
   // Ignorar mensajes propios
   if (msg.fromMe) return;
   // Ignorar mensajes vacíos o sin texto
