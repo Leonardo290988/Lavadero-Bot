@@ -74,15 +74,14 @@ client.on("message", async (msg) => {
   let nombreCliente = null;
   try {
     const tel = msg.from.replace("@c.us", "").replace(/\D/g, "");
-    // Buscar con distintos formatos de teléfono
+    const ultimos10 = tel.slice(-10); // Últimos 10 dígitos (sin código de país)
     const r = await pool.query(`
       SELECT nombre FROM clientes
       WHERE REGEXP_REPLACE(telefono, '[^0-9]', '', 'g') LIKE $1
-         OR REGEXP_REPLACE(telefono, '[^0-9]', '', 'g') LIKE $2
       LIMIT 1
-    `, [`%${tel.slice(-8)}%`, `%${tel}%`]);
+    `, [`%${ultimos10}%`]);
     if (r.rows.length > 0) {
-      nombreCliente = r.rows[0].nombre.split(" ")[0]; // Solo el primer nombre
+      nombreCliente = r.rows[0].nombre.split(" ")[0];
     }
   } catch (e) {
     console.error("Error buscando cliente:", e.message);
