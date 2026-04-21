@@ -74,12 +74,14 @@ client.on("message", async (msg) => {
   let nombreCliente = null;
   try {
     const tel = msg.from.replace("@c.us", "").replace(/\D/g, "");
-    const ultimos10 = tel.slice(-10); // Últimos 10 dígitos (sin código de país)
+    const ultimos10 = tel.slice(-10);
+    console.log(`🔍 Buscando teléfono: ${tel} → últimos 10: ${ultimos10}`);
     const r = await pool.query(`
-      SELECT nombre FROM clientes
+      SELECT nombre, telefono FROM clientes
       WHERE REGEXP_REPLACE(telefono, '[^0-9]', '', 'g') LIKE $1
       LIMIT 1
     `, [`%${ultimos10}%`]);
+    console.log(`🔍 Resultado: ${JSON.stringify(r.rows)}`);
     if (r.rows.length > 0) {
       nombreCliente = r.rows[0].nombre.split(" ")[0];
     }
@@ -101,13 +103,13 @@ client.on("message", async (msg) => {
   await new Promise(r => setTimeout(r, 1500 + Math.random() * 1500));
 
   // Detectar palabras clave
-  if (/precio|precios|cuánto|cuanto|vale|cuesta|tarifa|lista/.test(texto)) {
+  if (/precio|precios|cuánto|cuanto|vale|cuesta|tarifa/.test(texto)) {
     await responderPrecios(msg, nombre);
   } else if (/horario|horarios|abren|cierran|atienden|abierto|cuando/.test(texto)) {
     await msg.reply(
       `Hola ${nombre}! 😊\n\nAtendemos de *Lunes a Sábados de 9 a 18hs* 🕐\n\nEstamos en *Hipólito Yrigoyen 1471, Moreno* 📍\n\nCualquier otra consulta escribinos!`
     );
-  } else if (/orden|pedido|ropa|lista|listo|está|estado|retir/.test(texto)) {
+  } else if (/orden|pedido|ropa|lista|listo|está|lista|estado|retir|terminó|termino|estuvo/.test(texto)) {
     await msg.reply(
       `Hola ${nombre}! 👋\n\nPara consultar el estado de tu orden podés hacerlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá con tu número de teléfono y desde *Mis órdenes* podés ver el estado en tiempo real.\n\n¡Cualquier consulta escribinos! 😊`
     );
