@@ -141,7 +141,7 @@ client.on("message", async (msg) => {
     );
   } else if (/retiro|retiros|retirar|retiran/.test(texto)) {
     await msg.reply(
-      `${saludo} 🚚\n\nSí, hacemos retiros a domicilio! Podés solicitarlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá desde *Mis órdenes* y seleccioná *Solicitar retiro a domicilio*.\n\nEl costo varía según la zona. Cualquier consulta escribinos! 😊`
+      `${saludo} 😊\n\nSí, hacemos retiros y envíos a domicilio! 🚚\n\nPodés solicitarlo fácilmente desde nuestra app *Lavaderos Moreno* 📱\n\nDescargala en *Google Play*, ingresá con tu número de teléfono si ya sos cliente, o registrate en unos segundos. Luego seleccioná tu orden y tocá *Pedir retiro* o *Retiro y envío*.\n\nEl costo varía según la zona 📍 Cualquier consulta escribinos! 😊`
     );
   } else if (/alias|mp|mercadopago|mercado pago|transferencia|pagar|pago/.test(texto)) {
     await msg.reply(
