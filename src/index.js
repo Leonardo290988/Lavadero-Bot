@@ -1,5 +1,6 @@
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
+const QRCode = require("qrcode");
 const express = require("express");
 const { Pool } = require("pg");
 
@@ -33,15 +34,18 @@ const client = new Client({
 });
 
 let clientReady = false;
+let qrActual = null;
 
-client.on("qr", (qr) => {
+client.on("qr", async (qr) => {
   console.log("📱 Escanea este QR con WhatsApp:");
   qrcode.generate(qr, { small: true });
+  qrActual = qr;
 });
 
 client.on("ready", () => {
   console.log("✅ Bot de WhatsApp conectado y listo!");
   clientReady = true;
+  qrActual = null;
 });
 
 client.on("disconnected", (reason) => {
@@ -158,6 +162,30 @@ app.post("/enviar", async (req, res) => {
 
 app.get("/status", (req, res) => {
   res.json({ conectado: clientReady });
+});
+
+app.get("/qr", async (req, res) => {
+  if (clientReady) {
+    return res.send("<h2>✅ Bot ya está conectado!</h2>");
+  }
+  if (!qrActual) {
+    return res.send("<h2>⏳ Esperando QR... recargá la página en unos segundos</h2>");
+  }
+  try {
+    const qrImage = await QRCode.toDataURL(qrActual);
+    res.send(`
+      <html>
+        <body style="display:flex;flex-direction:column;align-items:center;font-family:sans-serif;padding:40px">
+          <h2>📱 Escanea este QR con WhatsApp</h2>
+          <p>Abrí WhatsApp → Dispositivos vinculados → Vincular dispositivo</p>
+          <img src="${qrImage}" style="width:300px;height:300px"/>
+          <p style="color:gray;font-size:12px">El QR expira en 20 segundos. Si expira, recargá la página.</p>
+        </body>
+      </html>
+    `);
+  } catch (e) {
+    res.send("<h2>Error generando QR</h2>");
+  }
 });
 
 // ======================================
