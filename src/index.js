@@ -85,6 +85,8 @@ client.on("message", async (msg) => {
   // Ignorar mensajes vacíos o sin texto
   if (!msg.body || msg.body.trim() === "") return;
 
+  const texto = msg.body.toLowerCase().trim();
+
   // Buscar nombre del cliente en la BD por teléfono
   let nombreCliente = null;
   try {
