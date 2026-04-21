@@ -42,10 +42,13 @@ client.on("qr", async (qr) => {
   qrActual = qr;
 });
 
+let botStartTime = Date.now();
+
 client.on("ready", () => {
   console.log("✅ Bot de WhatsApp conectado y listo!");
   clientReady = true;
   qrActual = null;
+  botStartTime = Date.now(); // Registrar hora de inicio
 });
 
 client.on("disconnected", (reason) => {
@@ -61,12 +64,33 @@ client.on("message", async (msg) => {
   if (msg.from.includes("@g.us")) return;
   // Ignorar mensajes propios
   if (msg.fromMe) return;
+  // Ignorar mensajes anteriores al inicio del bot (evita procesar historial)
+  const msgTime = msg.timestamp * 1000;
+  if (msgTime < botStartTime) return;
 
   const texto = msg.body.toLowerCase().trim();
-  const contact = await msg.getContact();
-  const nombre = contact.pushname || "cliente";
 
-  console.log(`📨 Mensaje de ${msg.from}: ${msg.body}`);
+  // Buscar nombre del cliente en la BD por teléfono
+  let nombreCliente = null;
+  try {
+    const tel = msg.from.replace("@c.us", "").replace(/\D/g, "");
+    // Buscar con distintos formatos de teléfono
+    const r = await pool.query(`
+      SELECT nombre FROM clientes
+      WHERE REGEXP_REPLACE(telefono, '[^0-9]', '', 'g') LIKE $1
+         OR REGEXP_REPLACE(telefono, '[^0-9]', '', 'g') LIKE $2
+      LIMIT 1
+    `, [`%${tel.slice(-8)}%`, `%${tel}%`]);
+    if (r.rows.length > 0) {
+      nombreCliente = r.rows[0].nombre.split(" ")[0]; // Solo el primer nombre
+    }
+  } catch (e) {
+    console.error("Error buscando cliente:", e.message);
+  }
+
+  const nombre = nombreCliente || "cliente";
+
+  console.log(`📨 Mensaje de ${msg.from} (${nombre}): ${msg.body}`);
 
   // Delay para parecer más humano (2-4 segundos)
   const delay = 2000 + Math.random() * 2000;
@@ -79,7 +103,7 @@ client.on("message", async (msg) => {
 
   // Detectar palabras clave
   if (/precio|precios|cuánto|cuanto|vale|cuesta|tarifa|lista/.test(texto)) {
-    await responderPrecios(msg);
+    await responderPrecios(msg, nombre);
   } else if (/horario|horarios|abren|cierran|atienden|abierto|cuando/.test(texto)) {
     await msg.reply(
       `Hola ${nombre}! 😊\n\nAtendemos de *Lunes a Sábados de 9 a 18hs* 🕐\n\nEstamos en *Hipólito Yrigoyen 1471, Moreno* 📍\n\nCualquier otra consulta escribinos!`
@@ -92,6 +116,10 @@ client.on("message", async (msg) => {
     await msg.reply(
       `Hola ${nombre}! 🚚\n\nSí, hacemos envíos a domicilio! Podés solicitarlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá desde *Mis órdenes* y seleccioná *Solicitar envío a domicilio*.\n\nEl costo varía según la zona. Cualquier consulta escribinos! 😊`
     );
+  } else if (/alias|mp|mercadopago|mercado pago|transferencia|pagar|pago/.test(texto)) {
+    await msg.reply(
+      `Hola ${nombre}! 💳\n\nPodés pagarnos por *MercadoPago* con el siguiente alias:\n\n*Lavaderos.moreno*\n_A nombre de Correa Yamila Belen_\n\nCualquier consulta escribinos! 😊`
+    );
   } else if (/hola|buenas|buen dia|buenas tardes|buenas noches|saludos/.test(texto)) {
     const hora = new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", hour: "numeric", hour12: false });
     const saludo = hora < 12 ? "Buenos días" : hora < 20 ? "Buenas tardes" : "Buenas noches";
@@ -100,7 +128,7 @@ client.on("message", async (msg) => {
     );
   } else {
     await msg.reply(
-      `Hola ${nombre}! 👋 Gracias por escribirnos.\n\nEn breve te atendemos 😊\n\nMientras tanto si querés podés consultar:\n• *Precios* — escribí "precios"\n• *Horarios* — escribí "horarios"\n• *Estado de tu orden* — escribí "orden"`
+      `Hola ${nombre}! 👋 Gracias por escribirnos.\n\nEn breve te atendemos 😊\n\nMientras tanto si querés podés consultar:\n• *Precios* — escribí "precios"\n• *Horarios* — escribí "horarios"\n• *Estado de tu orden* — escribí "orden"\n• *Alias de pago* — escribí "alias"`
     );
   }
 });
@@ -108,13 +136,13 @@ client.on("message", async (msg) => {
 // ======================================
 // FUNCIÓN PARA RESPONDER PRECIOS
 // ======================================
-async function responderPrecios(msg) {
+async function responderPrecios(msg, nombre) {
   try {
     const r = await pool.query(
       `SELECT nombre, precio FROM servicios WHERE activo = true OR activo IS NULL ORDER BY precio ASC`
     );
 
-    let lista = `🧺 *Lista de precios — Lavaderos Moreno*\n\n`;
+    let lista = `Hola ${nombre}! 😊\n\n🧺 *Lista de precios — Lavaderos Moreno*\n\n`;
     for (const s of r.rows) {
       lista += `• ${s.nombre}: *$${Number(s.precio).toLocaleString("es-AR")}*\n`;
     }
@@ -123,7 +151,7 @@ async function responderPrecios(msg) {
     await msg.reply(lista);
   } catch (error) {
     console.error("Error obteniendo precios:", error);
-    await msg.reply("Hola! 😊 En breve te pasamos los precios.");
+    await msg.reply(`Hola ${nombre}! 😊 En breve te pasamos los precios.`);
   }
 }
 
