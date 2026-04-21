@@ -69,15 +69,11 @@ client.on("message", async (msg) => {
   if (msg.type === "notification_template") return;
   // Ignorar mensajes propios
   if (msg.fromMe) return;
-  // Ignorar mensajes vacíos o sin texto
-  if (!msg.body || msg.body.trim() === "") return;
   // Ignorar mensajes anteriores al inicio del bot
   const msgTime = msg.timestamp * 1000;
   if (msgTime < botStartTime) return;
 
-  const texto = msg.body.toLowerCase().trim();
-
-  // Responder audios
+  // Responder audios ANTES del filtro de body vacío
   if (msg.type === "ptt" || msg.type === "audio") {
     await new Promise(r => setTimeout(r, 2000 + Math.random() * 1000));
     await msg.getChat().then(chat => chat.sendStateTyping());
@@ -85,6 +81,9 @@ client.on("message", async (msg) => {
     await msg.reply("Hola! 😊 Por el momento no podemos escuchar audios. Te pedimos que nos escribas tu consulta y te respondemos enseguida 🙏");
     return;
   }
+
+  // Ignorar mensajes vacíos o sin texto
+  if (!msg.body || msg.body.trim() === "") return;
 
   // Buscar nombre del cliente en la BD por teléfono
   let nombreCliente = null;
