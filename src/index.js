@@ -131,13 +131,17 @@ client.on("message", async (msg) => {
     await msg.reply(
       `${saludo} 😊\n\nAtendemos de *Lunes a Sábados de 9 a 18hs* 🕐\n\nEstamos en *Hipólito Yrigoyen 1471, Moreno* 📍\n\nCualquier otra consulta escribinos!`
     );
-  } else if (/orden|pedido|ropa|lista|listo|está|estado|retir|terminó|termino|estuvo/.test(texto)) {
+  } else if (/orden|pedido|ropa|lista|listo|está|estado|terminó|termino|estuvo/.test(texto)) {
     await msg.reply(
       `${saludo} 👋\n\nPara consultar el estado de tu orden podés hacerlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá con tu número de teléfono y desde *Mis órdenes* podés ver el estado en tiempo real.\n\n¡Cualquier consulta escribinos! 😊`
     );
-  } else if (/envío|envio|domicilio|delivery|mandan|llevan/.test(texto)) {
+  } else if (/envíos|envios|envío|envio|domicilio|delivery|mandan|llevan/.test(texto)) {
     await msg.reply(
       `${saludo} 🚚\n\nSí, hacemos envíos a domicilio! Podés solicitarlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá desde *Mis órdenes* y seleccioná *Solicitar envío a domicilio*.\n\nEl costo varía según la zona. Cualquier consulta escribinos! 😊`
+    );
+  } else if (/retiro|retiros|retirar|retiran/.test(texto)) {
+    await msg.reply(
+      `${saludo} 🚚\n\nSí, hacemos retiros a domicilio! Podés solicitarlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá desde *Mis órdenes* y seleccioná *Solicitar retiro a domicilio*.\n\nEl costo varía según la zona. Cualquier consulta escribinos! 😊`
     );
   } else if (/alias|mp|mercadopago|mercado pago|transferencia|pagar|pago/.test(texto)) {
     await msg.reply(
@@ -163,9 +167,19 @@ client.on("message", async (msg) => {
 // ======================================
 async function responderPrecios(msg, saludo) {
   try {
-    const r = await pool.query(
-      `SELECT nombre, precio FROM servicios WHERE activo = true OR activo IS NULL ORDER BY precio ASC`
-    );
+    const r = await pool.query(`
+      SELECT nombre, precio FROM servicios
+      WHERE (activo = true OR activo IS NULL)
+        AND nombre != 'Servicio Valet 1/2'
+      ORDER BY
+        CASE
+          WHEN nombre = 'Servicio Valet' THEN 1
+          WHEN nombre LIKE 'Acolchado%' THEN 2
+          WHEN nombre LIKE 'Lavado Acolchado%' THEN 3
+          ELSE 4
+        END,
+        precio ASC
+    `);
 
     let lista = `${saludo} 😊\n\n🧺 *Lista de precios — Lavaderos Moreno*\n\n`;
     for (const s of r.rows) {
