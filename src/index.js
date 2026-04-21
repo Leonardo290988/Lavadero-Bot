@@ -77,6 +77,15 @@ client.on("message", async (msg) => {
 
   const texto = msg.body.toLowerCase().trim();
 
+  // Responder audios
+  if (msg.type === "ptt" || msg.type === "audio") {
+    await new Promise(r => setTimeout(r, 2000 + Math.random() * 1000));
+    await msg.getChat().then(chat => chat.sendStateTyping());
+    await new Promise(r => setTimeout(r, 1500));
+    await msg.reply("Hola! 😊 Por el momento no podemos escuchar audios. Te pedimos que nos escribas tu consulta y te respondemos enseguida 🙏");
+    return;
+  }
+
   // Buscar nombre del cliente en la BD por teléfono
   let nombreCliente = null;
   try {
