@@ -64,7 +64,9 @@ client.on("message", async (msg) => {
   if (msg.from.includes("@g.us")) return;
   // Ignorar mensajes propios
   if (msg.fromMe) return;
-  // Ignorar mensajes anteriores al inicio del bot (evita procesar historial)
+  // Ignorar mensajes vacíos o sin texto
+  if (!msg.body || msg.body.trim() === "") return;
+  // Ignorar mensajes anteriores al inicio del bot
   const msgTime = msg.timestamp * 1000;
   if (msgTime < botStartTime) return;
 
@@ -73,25 +75,29 @@ client.on("message", async (msg) => {
   // Buscar nombre del cliente en la BD por teléfono
   let nombreCliente = null;
   try {
-    const tel = msg.from.replace("@c.us", "").replace(/\D/g, "");
-    const ultimos10 = tel.slice(-10);
-    console.log(`🔍 Buscando teléfono: ${tel} → últimos 10: ${ultimos10}`);
-    const r = await pool.query(`
-      SELECT nombre, telefono FROM clientes
-      WHERE REGEXP_REPLACE(telefono, '[^0-9]', '', 'g') LIKE $1
-      LIMIT 1
-    `, [`%${ultimos10}%`]);
-    console.log(`🔍 Resultado: ${JSON.stringify(r.rows)}`);
-    if (r.rows.length > 0) {
-      nombreCliente = r.rows[0].nombre.split(" ")[0];
+    // Obtener el número real del contacto
+    const contact = await msg.getContact();
+    const telReal = contact.number || "";
+    const ultimos10 = telReal.slice(-10);
+    console.log(`🔍 Contacto: ${contact.number} → últimos 10: ${ultimos10}`);
+    
+    if (ultimos10.length >= 8) {
+      const r = await pool.query(`
+        SELECT nombre FROM clientes
+        WHERE REGEXP_REPLACE(telefono, '[^0-9]', '', 'g') LIKE $1
+        LIMIT 1
+      `, [`%${ultimos10}%`]);
+      console.log(`🔍 Resultado: ${JSON.stringify(r.rows)}`);
+      if (r.rows.length > 0) {
+        nombreCliente = r.rows[0].nombre.split(" ")[0];
+      }
     }
   } catch (e) {
     console.error("Error buscando cliente:", e.message);
   }
 
   const nombre = nombreCliente || "cliente";
-
-  console.log(`📨 Mensaje de ${msg.from} (${nombre}): ${msg.body}`);
+  console.log(`📨 Mensaje de ${nombre}: ${msg.body}`);
 
   // Delay para parecer más humano (2-4 segundos)
   const delay = 2000 + Math.random() * 2000;
