@@ -185,14 +185,30 @@ app.post("/enviar", async (req, res) => {
     // Limpiar teléfono y agregar código de país Argentina
     let tel = telefono.replace(/\D/g, "");
     if (tel.startsWith("0")) tel = tel.slice(1);
-    if (!tel.startsWith("54")) tel = "54" + tel;
+    if (tel.startsWith("9")) tel = "54" + tel; // ya tiene 9 de celular
+    if (!tel.startsWith("54")) tel = "549" + tel; // agregar 54 + 9 (celulares Argentina)
     const chatId = `${tel}@c.us`;
 
     // Delay para parecer más humano
     await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
 
-    await client.sendMessage(chatId, mensaje);
-    console.log(`✅ Mensaje enviado a ${chatId}`);
+    // Verificar que el número existe en WhatsApp
+    const isRegistered = await client.isRegisteredUser(chatId);
+    if (!isRegistered) {
+      // Probar sin el 9
+      const telSin9 = tel.replace("549", "54");
+      const chatId2 = `${telSin9}@c.us`;
+      const isRegistered2 = await client.isRegisteredUser(chatId2);
+      if (!isRegistered2) {
+        console.log(`Número no registrado en WhatsApp: ${chatId}`);
+        return res.status(404).json({ error: "Número no registrado en WhatsApp" });
+      }
+      await client.sendMessage(chatId2, mensaje);
+    } else {
+      await client.sendMessage(chatId, mensaje);
+    }
+
+    console.log(`Mensaje enviado a ${chatId}`);
     res.json({ ok: true });
   } catch (error) {
     console.error("Error enviando mensaje:", error);
