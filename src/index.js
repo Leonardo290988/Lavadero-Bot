@@ -111,7 +111,8 @@ client.on("message", async (msg) => {
     console.error("Error buscando cliente:", e.message);
   }
 
-  const nombre = nombreCliente || "cliente";
+  const nombre = nombreCliente || null;
+  const saludo = nombre ? `Hola ${nombre}!` : "Hola!";
   console.log(`📨 Mensaje de ${nombre}: ${msg.body}`);
 
   // Delay para parecer más humano (2-4 segundos)
@@ -125,32 +126,34 @@ client.on("message", async (msg) => {
 
   // Detectar palabras clave
   if (/precio|precios|cuánto|cuanto|vale|cuesta|tarifa/.test(texto)) {
-    await responderPrecios(msg, nombre);
+    await responderPrecios(msg, saludo);
   } else if (/horario|horarios|abren|cierran|atienden|abierto|cuando/.test(texto)) {
     await msg.reply(
-      `Hola ${nombre}! 😊\n\nAtendemos de *Lunes a Sábados de 9 a 18hs* 🕐\n\nEstamos en *Hipólito Yrigoyen 1471, Moreno* 📍\n\nCualquier otra consulta escribinos!`
+      `${saludo} 😊\n\nAtendemos de *Lunes a Sábados de 9 a 18hs* 🕐\n\nEstamos en *Hipólito Yrigoyen 1471, Moreno* 📍\n\nCualquier otra consulta escribinos!`
     );
-  } else if (/orden|pedido|ropa|lista|listo|está|lista|estado|retir|terminó|termino|estuvo/.test(texto)) {
+  } else if (/orden|pedido|ropa|lista|listo|está|estado|retir|terminó|termino|estuvo/.test(texto)) {
     await msg.reply(
-      `Hola ${nombre}! 👋\n\nPara consultar el estado de tu orden podés hacerlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá con tu número de teléfono y desde *Mis órdenes* podés ver el estado en tiempo real.\n\n¡Cualquier consulta escribinos! 😊`
+      `${saludo} 👋\n\nPara consultar el estado de tu orden podés hacerlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá con tu número de teléfono y desde *Mis órdenes* podés ver el estado en tiempo real.\n\n¡Cualquier consulta escribinos! 😊`
     );
   } else if (/envío|envio|domicilio|delivery|mandan|llevan/.test(texto)) {
     await msg.reply(
-      `Hola ${nombre}! 🚚\n\nSí, hacemos envíos a domicilio! Podés solicitarlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá desde *Mis órdenes* y seleccioná *Solicitar envío a domicilio*.\n\nEl costo varía según la zona. Cualquier consulta escribinos! 😊`
+      `${saludo} 🚚\n\nSí, hacemos envíos a domicilio! Podés solicitarlo desde nuestra app 📱\n\nBuscá *Lavaderos Moreno* en Google Play, entrá desde *Mis órdenes* y seleccioná *Solicitar envío a domicilio*.\n\nEl costo varía según la zona. Cualquier consulta escribinos! 😊`
     );
   } else if (/alias|mp|mercadopago|mercado pago|transferencia|pagar|pago/.test(texto)) {
     await msg.reply(
-      `Hola ${nombre}! 💳\n\nPodés pagarnos por *MercadoPago* con el siguiente alias:\n\n*Lavaderos.moreno*\n_A nombre de Correa Yamila Belen_\n\nCualquier consulta escribinos! 😊`
+      `${saludo} 💳\n\nPodés pagarnos por *MercadoPago* con el siguiente alias:\n\n*Lavaderos.moreno*\n_A nombre de Correa Yamila Belen_\n\nCualquier consulta escribinos! 😊`
     );
   } else if (/hola|buenas|buen dia|buenas tardes|buenas noches|saludos/.test(texto)) {
     const hora = new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", hour: "numeric", hour12: false });
-    const saludo = hora < 12 ? "Buenos días" : hora < 20 ? "Buenas tardes" : "Buenas noches";
+    const saludoHora = hora < 12 ? "Buenos días" : hora < 20 ? "Buenas tardes" : "Buenas noches";
     await msg.reply(
-      `${saludo} ${nombre}! 😊 Bienvenido a *Lavaderos Moreno*.\n\n¿En qué te podemos ayudar? Podés preguntarnos por precios, horarios, el estado de tu orden, o cualquier otra consulta 🧺`
+      `${saludoHora}${nombre ? ` ${nombre}` : ""}! 😊 Bienvenido a *Lavaderos Moreno*.\n\n¿En qué te podemos ayudar? Podés preguntarnos por precios, horarios, el estado de tu orden, o cualquier otra consulta 🧺`
     );
+  } else if (/gracias|muchas gracias|grax/.test(texto)) {
+    await msg.reply(`${saludo} 😊 Gracias a vos! Cualquier consulta que tengas no dudes en escribirnos. ¡Hasta pronto! 🧺`);
   } else {
     await msg.reply(
-      `Hola ${nombre}! 👋 Gracias por escribirnos.\n\nEn breve te atendemos 😊\n\nMientras tanto si querés podés consultar:\n• *Precios* — escribí "precios"\n• *Horarios* — escribí "horarios"\n• *Estado de tu orden* — escribí "orden"\n• *Alias de pago* — escribí "alias"`
+      `${saludo} 👋 Gracias por escribirnos.\n\nEn breve te atendemos 😊\n\nMientras tanto si querés podés consultar:\n• *Precios* — escribí "precios"\n• *Horarios* — escribí "horarios"\n• *Estado de tu orden* — escribí "orden"\n• *Alias de pago* — escribí "alias"`
     );
   }
 });
@@ -158,13 +161,13 @@ client.on("message", async (msg) => {
 // ======================================
 // FUNCIÓN PARA RESPONDER PRECIOS
 // ======================================
-async function responderPrecios(msg, nombre) {
+async function responderPrecios(msg, saludo) {
   try {
     const r = await pool.query(
       `SELECT nombre, precio FROM servicios WHERE activo = true OR activo IS NULL ORDER BY precio ASC`
     );
 
-    let lista = `Hola ${nombre}! 😊\n\n🧺 *Lista de precios — Lavaderos Moreno*\n\n`;
+    let lista = `${saludo} 😊\n\n🧺 *Lista de precios — Lavaderos Moreno*\n\n`;
     for (const s of r.rows) {
       lista += `• ${s.nombre}: *$${Number(s.precio).toLocaleString("es-AR")}*\n`;
     }
@@ -173,7 +176,7 @@ async function responderPrecios(msg, nombre) {
     await msg.reply(lista);
   } catch (error) {
     console.error("Error obteniendo precios:", error);
-    await msg.reply(`Hola ${nombre}! 😊 En breve te pasamos los precios.`);
+    await msg.reply(`${saludo} 😊 En breve te pasamos los precios.`);
   }
 }
 
