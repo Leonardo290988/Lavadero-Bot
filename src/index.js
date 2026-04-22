@@ -1,4 +1,4 @@
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const { Client, RemoteAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const QRCode = require("qrcode");
 const express = require("express");
@@ -13,10 +13,80 @@ const pool = new Pool({
 });
 
 // ======================================
+// STORE PERSONALIZADO PARA GUARDAR SESIÓN EN POSTGRESQL
+// ======================================
+class PostgresStore {
+  async sessionExists(options) {
+    try {
+      const r = await pool.query(
+        `SELECT id FROM whatsapp_session WHERE session_id = $1`,
+        [options.session]
+      );
+      return r.rows.length > 0;
+    } catch { return false; }
+  }
+
+  async save(options) {
+    try {
+      const data = JSON.stringify(options.session);
+      await pool.query(`
+        INSERT INTO whatsapp_session (session_id, session_data, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (session_id) DO UPDATE SET session_data = $2, updated_at = NOW()
+      `, [options.session, data]);
+      console.log("Sesion guardada en BD");
+    } catch (err) {
+      console.error("Error guardando sesion:", err.message);
+    }
+  }
+
+  async extract(options) {
+    try {
+      const r = await pool.query(
+        `SELECT session_data FROM whatsapp_session WHERE session_id = $1`,
+        [options.session]
+      );
+      if (r.rows.length > 0) {
+        return JSON.parse(r.rows[0].session_data);
+      }
+    } catch (err) {
+      console.error("Error extrayendo sesion:", err.message);
+    }
+    return null;
+  }
+
+  async delete(options) {
+    try {
+      await pool.query(
+        `DELETE FROM whatsapp_session WHERE session_id = $1`,
+        [options.session]
+      );
+    } catch (err) {
+      console.error("Error eliminando sesion:", err.message);
+    }
+  }
+}
+
+// Crear tabla si no existe
+pool.query(`
+  CREATE TABLE IF NOT EXISTS whatsapp_session (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(100) UNIQUE NOT NULL,
+    session_data TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT NOW()
+  )
+`).catch(err => console.error("Error creando tabla sesion:", err.message));
+
+// ======================================
 // CLIENTE WHATSAPP
 // ======================================
+const store = new PostgresStore();
+
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: "/app/.wwebjs_auth" }),
+  authStrategy: new RemoteAuth({
+    store,
+    backupSyncIntervalMs: 300000 // guardar cada 5 minutos
+  }),
   puppeteer: {
     headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
@@ -43,6 +113,10 @@ client.on("qr", async (qr) => {
 });
 
 let botStartTime = Date.now();
+
+client.on("remote_session_saved", () => {
+  console.log("Sesion guardada remotamente en BD");
+});
 
 client.on("ready", () => {
   console.log("✅ Bot de WhatsApp conectado y listo!");
