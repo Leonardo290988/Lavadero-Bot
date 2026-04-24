@@ -1,0 +1,30 @@
+# Dependencias
+node_modules/
+
+# Variables de entorno (¡NUNCA subir al repo!)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Sesión de WhatsApp Web (contiene credenciales!)
+.wwebjs_auth/
+.wwebjs_cache/
+session/
+session.json
+tokens/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

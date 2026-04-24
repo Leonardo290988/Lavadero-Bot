@@ -3,6 +3,7 @@ const qrcode = require("qrcode-terminal");
 const QRCode = require("qrcode");
 const express = require("express");
 const { Pool } = require("pg");
+const axios = require("axios");
 
 const app = express();
 app.use(express.json());
@@ -56,6 +57,94 @@ client.on("disconnected", (reason) => {
 });
 
 // ======================================
+// OBTENER CONTEXTO DEL LAVADERO
+// ======================================
+async function obtenerContexto() {
+  try {
+    const servicios = await pool.query(`
+      SELECT nombre, precio FROM servicios
+      WHERE (activo = true OR activo IS NULL)
+        AND nombre != 'Servicio Valet 1/2'
+      ORDER BY
+        CASE
+          WHEN nombre = 'Servicio Valet' THEN 1
+          WHEN nombre LIKE 'Acolchado%' THEN 2
+          WHEN nombre LIKE 'Lavado Acolchado%' THEN 3
+          ELSE 4
+        END, precio ASC
+    `);
+
+    const listaPrecios = servicios.rows
+      .map(s => `- ${s.nombre}: $${Number(s.precio).toLocaleString("es-AR")}`)
+      .join("\n");
+
+    return `Sos el asistente virtual de Lavaderos Moreno, una lavandería ubicada en Hipólito Yrigoyen 1471, Moreno, Buenos Aires, Argentina.
+
+INFORMACIÓN DEL NEGOCIO:
+- Nombre: Lavaderos Moreno
+- Dirección: Hipólito Yrigoyen 1471, Moreno, Buenos Aires
+- Horario: Lunes a Sábados de 9 a 18hs
+- Alias MercadoPago: Lavaderos.moreno (a nombre de Correa Yamila Belen)
+
+LISTA DE PRECIOS ACTUAL:
+${listaPrecios}
+
+SERVICIOS ADICIONALES:
+- Hacemos retiros y envíos a domicilio. El cliente lo solicita desde la app Lavaderos Moreno (disponible en Google Play)
+- La app permite ver el estado de las órdenes en tiempo real
+- Para solicitar retiro o envío: abrir la app → Mis órdenes → Pedir retiro o Retiro y envío
+- El costo del envío varía según la zona
+
+INSTRUCCIONES PARA RESPONDER:
+- Respondé siempre en español argentino, de forma amigable y cercana
+- Usá "vos" en lugar de "tú"
+- Sé conciso pero completo
+- Si preguntan por precios, mostrá la lista completa
+- Si preguntan por el estado de su orden, deciles que lo pueden ver desde la app
+- No inventes información que no tenés
+- No respondas consultas que no tengan que ver con el lavadero
+- Usá emojis moderadamente para que sea más amigable
+- Máximo 3-4 párrafos por respuesta`;
+  } catch (err) {
+    console.error("Error obteniendo contexto:", err.message);
+    return "";
+  }
+}
+
+// ======================================
+// RESPONDER CON CLAUDE
+// ======================================
+async function responderConClaude(mensaje, nombreCliente) {
+  try {
+    const contexto = await obtenerContexto();
+    const saludo = nombreCliente ? `El cliente se llama ${nombreCliente}.` : "";
+
+    const response = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: "claude-haiku-4-5",
+        max_tokens: 500,
+        system: `${contexto}\n\n${saludo}`,
+        messages: [{ role: "user", content: mensaje }]
+      },
+      {
+        headers: {
+          "x-api-key": process.env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        timeout: 15000
+      }
+    );
+
+    return response.data.content[0].text;
+  } catch (err) {
+    console.error("Error llamando a Claude:", err.message);
+    return null;
+  }
+}
+
+// ======================================
 // RESPUESTAS AUTOMÁTICAS A MENSAJES ENTRANTES
 // ======================================
 client.on("message", async (msg) => {
@@ -73,13 +162,11 @@ client.on("message", async (msg) => {
     await new Promise(r => setTimeout(r, 2000 + Math.random() * 1000));
     await msg.getChat().then(chat => chat.sendStateTyping());
     await new Promise(r => setTimeout(r, 1500));
-    await msg.reply("Hola! Por el momento no podemos escuchar audios. Te pedimos que nos escribas tu consulta y te respondemos enseguida.");
+    await msg.reply("Hola! 😊 Por el momento no podemos escuchar audios. Te pedimos que nos escribas tu consulta y te respondemos enseguida 🙏");
     return;
   }
 
   if (!msg.body || msg.body.trim() === "") return;
-
-  const texto = msg.body.toLowerCase().trim();
 
   // Buscar nombre del cliente en la BD por teléfono
   let nombreCliente = null;
@@ -101,69 +188,26 @@ client.on("message", async (msg) => {
     console.error("Error buscando cliente:", e.message);
   }
 
-  const nombre = nombreCliente || null;
-  const saludo = nombre ? `Hola ${nombre}!` : "Hola!";
+  console.log(`Mensaje de ${nombreCliente || "desconocido"}: ${msg.body}`);
 
-  console.log(`Mensaje de ${nombre || "desconocido"}: ${msg.body}`);
-
+  // Delay para parecer más humano
   const delay = 2000 + Math.random() * 2000;
   await new Promise(r => setTimeout(r, delay));
   await client.sendPresenceAvailable();
   await msg.getChat().then(chat => chat.sendStateTyping());
-  await new Promise(r => setTimeout(r, 1500 + Math.random() * 1500));
 
-  if (/precio|precios|cuanto|cuánto|vale|cuesta|tarifa/.test(texto)) {
-    await responderPrecios(msg, saludo);
-  } else if (/horario|horarios|abren|cierran|atienden|abierto|cuando/.test(texto)) {
-    await msg.reply(`${saludo} \n\nAtendemos de *Lunes a Sabados de 9 a 18hs*\n\nEstamos en *Hipolito Yrigoyen 1471, Moreno*\n\nCualquier otra consulta escribinos!`);
-  } else if (/orden|pedido|ropa|lista|listo|esta|estado|termino|termino|estuvo/.test(texto)) {
-    await msg.reply(`${saludo} \n\nPara consultar el estado de tu orden podes hacerlo desde nuestra app\n\nBusca *Lavaderos Moreno* en Google Play, entra con tu numero de telefono y desde *Mis ordenes* podes ver el estado en tiempo real.\n\nCualquier consulta escribinos!`);
-  } else if (/envios|envios|envio|envio|retiro|retiros|retirar|retiran|domicilio|delivery|mandan|llevan/.test(texto)) {
-    await msg.reply(`${saludo} \n\nSi, hacemos retiros y envios a domicilio!\n\nPodes solicitarlo facilmente desde nuestra app *Lavaderos Moreno*\n\nDescargala en *Google Play*, ingresa con tu numero de telefono si ya sos cliente, o registrate en unos segundos. Luego selecciona tu orden y toca *Pedir retiro* o *Retiro y envio*.\n\nEl costo varia segun la zona. Cualquier consulta escribinos!`);
-  } else if (/alias|mp|mercadopago|mercado pago|transferencia|pagar|pago/.test(texto)) {
-    await msg.reply(`${saludo} \n\nPodes pagarnos por *MercadoPago* con el siguiente alias:\n\n*Lavaderos.moreno*\n_A nombre de Correa Yamila Belen_\n\nCualquier consulta escribinos!`);
-  } else if (/hola|buenas|buen dia|buenas tardes|buenas noches|saludos/.test(texto)) {
-    const hora = new Date().toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", hour: "numeric", hour12: false });
-    const saludoHora = hora < 12 ? "Buenos dias" : hora < 20 ? "Buenas tardes" : "Buenas noches";
-    await msg.reply(`${saludoHora}${nombre ? ` ${nombre}` : ""}! Bienvenido a *Lavaderos Moreno*.\n\nEn que te podemos ayudar? Podes preguntarnos por precios, horarios, el estado de tu orden, o cualquier otra consulta.`);
-  } else if (/gracias|muchas gracias|grax/.test(texto)) {
-    await msg.reply(`${saludo} Gracias a vos! Cualquier consulta que tengas no dudes en escribirnos. Hasta pronto!`);
+  // Llamar a Claude para generar respuesta
+  const respuesta = await responderConClaude(msg.body, nombreCliente);
+
+  if (respuesta) {
+    await new Promise(r => setTimeout(r, 1000 + Math.random() * 1500));
+    await msg.reply(respuesta);
   } else {
-    await msg.reply(`${saludo} Gracias por escribirnos.\n\nEn breve te atendemos.\n\nMientras tanto si queres podes consultar:\n- *Precios* - escribi "precios"\n- *Horarios* - escribi "horarios"\n- *Estado de tu orden* - escribi "orden"\n- *Alias de pago* - escribi "alias"`);
+    // Fallback si Claude falla
+    const saludo = nombreCliente ? `Hola ${nombreCliente}!` : "Hola!";
+    await msg.reply(`${saludo} 👋 Gracias por escribirnos. En breve te atendemos 😊`);
   }
 });
-
-// ======================================
-// FUNCIÓN PARA RESPONDER PRECIOS
-// ======================================
-async function responderPrecios(msg, saludo) {
-  try {
-    const r = await pool.query(`
-      SELECT nombre, precio FROM servicios
-      WHERE (activo = true OR activo IS NULL)
-        AND nombre != 'Servicio Valet 1/2'
-      ORDER BY
-        CASE
-          WHEN nombre = 'Servicio Valet' THEN 1
-          WHEN nombre LIKE 'Acolchado%' THEN 2
-          WHEN nombre LIKE 'Lavado Acolchado%' THEN 3
-          ELSE 4
-        END,
-        precio ASC
-    `);
-
-    let lista = `${saludo}\n\nLista de precios - Lavaderos Moreno\n\n`;
-    for (const s of r.rows) {
-      lista += `- ${s.nombre}: *$${Number(s.precio).toLocaleString("es-AR")}*\n`;
-    }
-    lista += `\nHipolito Yrigoyen 1471, Moreno\nLunes a Sabados de 9 a 18hs`;
-
-    await msg.reply(lista);
-  } catch (error) {
-    console.error("Error obteniendo precios:", error);
-    await msg.reply(`${saludo} En breve te pasamos los precios.`);
-  }
-}
 
 // ======================================
 // API REST
