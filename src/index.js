@@ -89,7 +89,19 @@ INFORMACIÓN DEL NEGOCIO:
 LISTA DE PRECIOS ACTUAL:
 ${listaPrecios}
 
-SERVICIOS ADICIONALES:
+PROMOCIONES VIGENTES:
+- Acolchados y Frazadas 3x2: llevás 3 acolchados/frazadas (combinables entre sí) y pagás 2 (el más barato es gratis). Válido de Martes a Viernes.
+- Camperones 3x2: llevás 3 camperones y pagás 2 (el más barato es gratis). Válido de Martes a Viernes.
+
+INFORMACIÓN ADICIONAL SOBRE PRECIOS:
+- Las frazadas tienen el mismo precio que los acolchados del mismo tamaño y tipo
+- Las frazadas entran en la promo 3x2 junto con los acolchados (se pueden combinar)
+
+SISTEMA DE PUNTOS DE FIDELIDAD:
+- Por cada $1.000 gastados el cliente suma 1 punto
+- Con 100 puntos acumulados: 10% de descuento en la próxima orden
+- Con 200 puntos acumulados: 20% de descuento en la próxima orden
+- Los puntos se acumulan automáticamente al retirar cada orden
 - Hacemos retiros y envíos a domicilio. El cliente lo solicita desde la app Lavaderos Moreno (disponible en Google Play)
 - La app permite ver el estado de las órdenes en tiempo real
 - Para solicitar retiro o envío: abrir la app → Mis órdenes → Pedir retiro o Retiro y envío
