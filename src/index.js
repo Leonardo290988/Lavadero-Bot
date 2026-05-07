@@ -148,17 +148,46 @@ const HISTORIAL_HORAS = 2;
 const HISTORIAL_MS = HISTORIAL_HORAS * 60 * 60 * 1000;
 
 // 🆕 Set de mensajes enviados por el BOT (para distinguir de mensajes del empleado)
-// Guardamos los msg.id de los mensajes que envía el bot, así podemos identificarlos
-// cuando vuelven en el evento message_create con fromMe=true
-const mensajesEnviadosPorBot = new Set();
-// Se limpia cada 5 min para no crecer infinito
+// Como WhatsApp puede usar formatos distintos de chat ID (@c.us vs @lid),
+// trackear por ID es poco confiable. En su lugar, guardamos {texto, timestamp}
+// y matcheamos por contenido + tiempo.
+const mensajesEnviadosPorBot = [];
+// Cada entrada: { texto: string, timestamp: number }
 
+const VENTANA_MATCH_BOT_MS = 30000; // 30 segundos para matchear bot vs empleado
+
+// Limpieza periódica
 setInterval(() => {
-  if (mensajesEnviadosPorBot.size > 1000) {
-    mensajesEnviadosPorBot.clear();
-    console.log("🧹 Limpieza de mensajesEnviadosPorBot");
+  const ahora = Date.now();
+  // Eliminar entradas viejas
+  while (mensajesEnviadosPorBot.length > 0 &&
+         (ahora - mensajesEnviadosPorBot[0].timestamp) > VENTANA_MATCH_BOT_MS) {
+    mensajesEnviadosPorBot.shift();
   }
-}, 5 * 60 * 1000);
+}, 30 * 1000);
+
+function registrarMensajeBot(texto) {
+  mensajesEnviadosPorBot.push({
+    texto: texto.trim(),
+    timestamp: Date.now()
+  });
+}
+
+function esMensajeDelBot(texto) {
+  const ahora = Date.now();
+  const limpio = texto.trim();
+
+  for (let i = mensajesEnviadosPorBot.length - 1; i >= 0; i--) {
+    const entry = mensajesEnviadosPorBot[i];
+    if ((ahora - entry.timestamp) > VENTANA_MATCH_BOT_MS) break;
+    if (entry.texto === limpio) {
+      // Match: lo eliminamos para no matchearlo dos veces
+      mensajesEnviadosPorBot.splice(i, 1);
+      return true;
+    }
+  }
+  return false;
+}
 
 function agregarAlHistorial(chatId, rol, contenido) {
   if (!contenido || !contenido.trim()) return;
@@ -266,21 +295,18 @@ function pideOperador(texto) {
 }
 
 // 🆕 Helper para enviar mensajes "marcados" como del bot
-// Guardamos el ID del mensaje enviado para distinguirlo después
+// Registra el texto + timestamp para distinguirlo después en message_create
 async function enviarMensajeDelBot(msgOrChat, texto) {
+  // Registrar ANTES de enviar (para que el evento message_create encuentre el match)
+  registrarMensajeBot(texto);
+
   let sent;
   if (msgOrChat.reply) {
-    // Es un msg, hacemos reply
     sent = await msgOrChat.reply(texto);
   } else if (msgOrChat.sendMessage) {
-    // Es un chat
     sent = await msgOrChat.sendMessage(texto);
   } else {
     return null;
-  }
-
-  if (sent && sent.id && sent.id._serialized) {
-    mensajesEnviadosPorBot.add(sent.id._serialized);
   }
   return sent;
 }
@@ -506,16 +532,15 @@ client.on("message_create", async (msg) => {
   if (!chatId) return;
   if (!msg.body || msg.body.trim() === "") return;
 
-  // 🆕 Detección 100% confiable: si el ID está en el Set, es del bot
-  const msgId = msg.id?._serialized;
-  if (msgId && mensajesEnviadosPorBot.has(msgId)) {
-    // Es el bot enviando una respuesta — ignorar, ya está todo manejado
-    mensajesEnviadosPorBot.delete(msgId); // limpiar para no acumular
+  // 🆕 Detección por texto + timestamp (no por ID porque WhatsApp usa formatos
+  // distintos de chat ID @c.us y @lid que no matchean)
+  if (esMensajeDelBot(msg.body)) {
+    console.log(`✅ Mensaje identificado como del BOT (chat: ${chatId})`);
     return;
   }
 
   // 🆕 Es un mensaje del EMPLEADO/DUEÑO escribiendo manualmente desde WhatsApp
-  console.log(`👤 Mensaje del empleado a ${chatId}: "${msg.body}"`);
+  console.log(`👤 Mensaje del empleado a ${chatId}: "${msg.body.substring(0, 60)}..."`);
 
   // Guardar en historial como "assistant" (para que el bot lo vea como contexto)
   agregarAlHistorial(chatId, "assistant", msg.body.trim());
@@ -566,12 +591,10 @@ app.post("/enviar", async (req, res) => {
       chatIdFinal = chatId2;
     }
 
-    const sent = await client.sendMessage(chatIdFinal, mensaje);
+    // 🆕 Registrar como mensaje del bot ANTES de enviar
+    registrarMensajeBot(mensaje);
 
-    // 🆕 Registrar el ID para no contarlo como mensaje del empleado
-    if (sent && sent.id && sent.id._serialized) {
-      mensajesEnviadosPorBot.add(sent.id._serialized);
-    }
+    const sent = await client.sendMessage(chatIdFinal, mensaje);
 
     // 🆕 Guardar mensajes automáticos del backend en el historial también
     agregarAlHistorial(chatIdFinal, "assistant", mensaje);
