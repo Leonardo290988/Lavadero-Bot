@@ -147,6 +147,19 @@ const historialPorChat = new Map();
 const HISTORIAL_HORAS = 2;
 const HISTORIAL_MS = HISTORIAL_HORAS * 60 * 60 * 1000;
 
+// 🆕 Set de mensajes enviados por el BOT (para distinguir de mensajes del empleado)
+// Guardamos los msg.id de los mensajes que envía el bot, así podemos identificarlos
+// cuando vuelven en el evento message_create con fromMe=true
+const mensajesEnviadosPorBot = new Set();
+// Se limpia cada 5 min para no crecer infinito
+
+setInterval(() => {
+  if (mensajesEnviadosPorBot.size > 1000) {
+    mensajesEnviadosPorBot.clear();
+    console.log("🧹 Limpieza de mensajesEnviadosPorBot");
+  }
+}, 5 * 60 * 1000);
+
 function agregarAlHistorial(chatId, rol, contenido) {
   if (!contenido || !contenido.trim()) return;
 
@@ -252,6 +265,26 @@ function pideOperador(texto) {
   return palabras.some(p => limpio === p || limpio.includes(p));
 }
 
+// 🆕 Helper para enviar mensajes "marcados" como del bot
+// Guardamos el ID del mensaje enviado para distinguirlo después
+async function enviarMensajeDelBot(msgOrChat, texto) {
+  let sent;
+  if (msgOrChat.reply) {
+    // Es un msg, hacemos reply
+    sent = await msgOrChat.reply(texto);
+  } else if (msgOrChat.sendMessage) {
+    // Es un chat
+    sent = await msgOrChat.sendMessage(texto);
+  } else {
+    return null;
+  }
+
+  if (sent && sent.id && sent.id._serialized) {
+    mensajesEnviadosPorBot.add(sent.id._serialized);
+  }
+  return sent;
+}
+
 // ======================================
 // RESPONDER CON CLAUDE (con historial)
 // ======================================
@@ -327,7 +360,7 @@ async function procesarBuffer(from) {
 
     const saludo = nombreCliente ? `Perfecto ${nombreCliente}` : "Perfecto";
     const respuesta = `${saludo} 👍\n\nEn breve un empleado del local te va a responder personalmente. Por favor esperá unos minutos 🙏\n\nNuestro horario de atención es de Lunes a Sábados de 9 a 18hs.`;
-    await lastMsg.reply(respuesta);
+    await enviarMensajeDelBot(lastMsg, respuesta);
 
     // Guardar en historial
     agregarAlHistorial(from, "user", textoCompleto);
@@ -355,12 +388,12 @@ async function procesarBuffer(from) {
   agregarAlHistorial(from, "user", textoCompleto);
 
   if (respuesta) {
-    await lastMsg.reply(respuesta);
+    await enviarMensajeDelBot(lastMsg, respuesta);
     agregarAlHistorial(from, "assistant", respuesta);
   } else {
     const saludo = nombreCliente ? `Hola ${nombreCliente}!` : "Hola!";
     const fallback = `${saludo} 👋 Gracias por escribirnos. En breve te atendemos 😊\n\nSi querés hablar con una persona del local, escribí "operador".`;
-    await lastMsg.reply(fallback);
+    await enviarMensajeDelBot(lastMsg, fallback);
     agregarAlHistorial(from, "assistant", fallback);
   }
 }
@@ -404,7 +437,7 @@ client.on("message", async (msg) => {
     await msg.getChat().then(chat => chat.sendStateTyping());
     await new Promise(r => setTimeout(r, 1500));
     const respuesta = `Hola! 😊 Por el momento no podemos escuchar audios. Te pedimos que nos escribas tu consulta y te respondemos enseguida 🙏\n\nSi querés hablar con una persona del local, escribí "operador".`;
-    await msg.reply(respuesta);
+    await enviarMensajeDelBot(msg, respuesta);
     agregarAlHistorial(msg.from, "assistant", respuesta);
     return;
   }
@@ -469,29 +502,19 @@ client.on("message_create", async (msg) => {
   const msgTime = msg.timestamp * 1000;
   if (msgTime < botStartTime) return;
 
-  // Detectar si fue una respuesta automática del bot mismo
-  // (el bot las marca con un identificador interno, pero por ahora confiamos en el flujo)
-  // Si el mensaje saliente NO está en el historial reciente como "assistant",
-  // lo consideramos del empleado.
-
-  const chatId = msg.to; // a quién le estamos escribiendo
+  const chatId = msg.to;
   if (!chatId) return;
   if (!msg.body || msg.body.trim() === "") return;
 
-  const historial = historialPorChat.get(chatId) || [];
-  const ultimoAssistant = [...historial].reverse().find(m => m.rol === "assistant");
-
-  // Si el último mensaje "assistant" del historial es exactamente este texto,
-  // significa que lo envió el bot (no el empleado)
-  const esRespuestaDelBot = ultimoAssistant &&
-    ultimoAssistant.contenido === msg.body.trim() &&
-    (Date.now() - ultimoAssistant.timestamp) < 10000; // últimos 10 seg
-
-  if (esRespuestaDelBot) {
-    return; // Ya se guardó cuando el bot respondió
+  // 🆕 Detección 100% confiable: si el ID está en el Set, es del bot
+  const msgId = msg.id?._serialized;
+  if (msgId && mensajesEnviadosPorBot.has(msgId)) {
+    // Es el bot enviando una respuesta — ignorar, ya está todo manejado
+    mensajesEnviadosPorBot.delete(msgId); // limpiar para no acumular
+    return;
   }
 
-  // 🆕 Es un mensaje del EMPLEADO/DUEÑO
+  // 🆕 Es un mensaje del EMPLEADO/DUEÑO escribiendo manualmente desde WhatsApp
   console.log(`👤 Mensaje del empleado a ${chatId}: "${msg.body}"`);
 
   // Guardar en historial como "assistant" (para que el bot lo vea como contexto)
@@ -503,7 +526,6 @@ client.on("message_create", async (msg) => {
     activarModoHumano(chatId);
     console.log(`🧑‍💼 Modo humano AUTO-activado: el empleado tomó la conversación`);
   } else {
-    // Refrescar el timer
     refrescarModoHumano(chatId);
   }
 });
@@ -544,7 +566,12 @@ app.post("/enviar", async (req, res) => {
       chatIdFinal = chatId2;
     }
 
-    await client.sendMessage(chatIdFinal, mensaje);
+    const sent = await client.sendMessage(chatIdFinal, mensaje);
+
+    // 🆕 Registrar el ID para no contarlo como mensaje del empleado
+    if (sent && sent.id && sent.id._serialized) {
+      mensajesEnviadosPorBot.add(sent.id._serialized);
+    }
 
     // 🆕 Guardar mensajes automáticos del backend en el historial también
     agregarAlHistorial(chatIdFinal, "assistant", mensaje);
@@ -572,6 +599,20 @@ app.get("/modo-humano", (req, res) => {
     });
   }
   res.json({ total: activos.length, chats: activos });
+});
+
+// 🆕 Endpoint para DESACTIVAR el modo humano de un chat (o de todos)
+// GET /modo-humano/reset → desactiva todos
+// GET /modo-humano/reset?chatId=549XXX@c.us → desactiva uno
+app.get("/modo-humano/reset", (req, res) => {
+  const { chatId } = req.query;
+  if (chatId) {
+    modoHumano.delete(chatId);
+    return res.json({ ok: true, mensaje: `Modo humano desactivado para ${chatId}` });
+  }
+  const total = modoHumano.size;
+  modoHumano.clear();
+  res.json({ ok: true, mensaje: `Modo humano desactivado para ${total} chat(s)` });
 });
 
 app.get("/qr", async (req, res) => {
