@@ -295,6 +295,70 @@ setInterval(() => {
 }, 60 * 1000); // cada 1 minuto
 
 // ======================================
+// 🆕 NOTIFICACIÓN DE OPERADOR AL PANEL
+// Cuando un cliente pide "operador", guardamos una fila en la DB
+// para que los empleados la vean en la campana del panel.
+// El bot escribe DIRECTO a la base (ya tiene pool configurado).
+// ======================================
+
+// Crear la tabla si no existe (por si el bot arranca antes que el backend)
+pool.query(`
+  CREATE TABLE IF NOT EXISTS notificaciones_operador (
+    id SERIAL PRIMARY KEY,
+    chat_id VARCHAR(80) NOT NULL,
+    telefono VARCHAR(40),
+    nombre_cliente VARCHAR(120),
+    mensaje_cliente TEXT,
+    atendido BOOLEAN DEFAULT false,
+    fecha_pedido TIMESTAMP DEFAULT NOW(),
+    fecha_atendido TIMESTAMP
+  )
+`).catch(err => console.error("Error creando notificaciones_operador:", err.message));
+
+async function registrarNotificacionOperador(chatId, telefono, nombreCliente, mensajeCliente) {
+  try {
+    // Evitar duplicados: si ya hay una pendiente para este chat, no creamos otra
+    const existe = await pool.query(`
+      SELECT id FROM notificaciones_operador
+      WHERE chat_id = $1 AND atendido = false
+      LIMIT 1
+    `, [chatId]);
+
+    if (existe.rows.length > 0) {
+      console.log(`🔔 Ya hay una notificación pendiente para ${chatId}, no se duplica`);
+      return;
+    }
+
+    await pool.query(`
+      INSERT INTO notificaciones_operador
+        (chat_id, telefono, nombre_cliente, mensaje_cliente)
+      VALUES ($1, $2, $3, $4)
+    `, [chatId, telefono || null, nombreCliente || null, mensajeCliente || null]);
+
+    console.log(`🔔 Notificación de operador creada para ${nombreCliente || chatId}`);
+  } catch (err) {
+    console.error("Error registrando notificación de operador:", err.message);
+  }
+}
+
+async function cerrarNotificacionOperador(chatId) {
+  try {
+    const r = await pool.query(`
+      UPDATE notificaciones_operador
+      SET atendido = true, fecha_atendido = NOW()
+      WHERE chat_id = $1 AND atendido = false
+      RETURNING id
+    `, [chatId]);
+
+    if (r.rows.length > 0) {
+      console.log(`✅ ${r.rows.length} notificación(es) de operador cerrada(s) para ${chatId}`);
+    }
+  } catch (err) {
+    console.error("Error cerrando notificación de operador:", err.message);
+  }
+}
+
+// ======================================
 // 🆕 DETECTAR SI EL MENSAJE PIDE OPERADOR
 // ======================================
 function pideOperador(texto) {
@@ -408,6 +472,17 @@ async function procesarBuffer(from) {
     // Guardar en historial
     agregarAlHistorial(from, "user", textoCompleto);
     agregarAlHistorial(from, "assistant", respuesta);
+
+    // 🆕 Registrar notificación en el panel del lavadero (campana)
+    // Intentamos obtener el teléfono real del contacto para el link de WhatsApp
+    let telefonoCliente = null;
+    try {
+      const contact = await lastMsg.getContact();
+      telefonoCliente = contact.number || null;
+    } catch (e) {
+      // Si no se puede, dejamos null (el chat_id igual identifica al cliente)
+    }
+    await registrarNotificacionOperador(from, telefonoCliente, nombreCliente, textoCompleto);
 
     // 🆕 Marcar el chat como NO LEÍDO para que el empleado lo vea
     try {
@@ -570,6 +645,9 @@ client.on("message_create", async (msg) => {
   } else {
     refrescarModoHumano(chatId);
   }
+
+  // 🆕 El empleado respondió → cerrar la notificación de operador pendiente (cierre automático)
+  await cerrarNotificacionOperador(chatId);
 });
 
 // ======================================
