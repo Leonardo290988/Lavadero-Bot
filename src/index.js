@@ -83,8 +83,12 @@ async function obtenerContexto() {
 INFORMACIÓN DEL NEGOCIO:
 - Nombre: Lavaderos Moreno
 - Dirección: Hipólito Yrigoyen 1471, Moreno, Buenos Aires
-- Horario: Lunes a Sábados de 9 a 18hs
+- Horario: Lunes a Sábados de 9 a 18hs (Domingos cerrado)
 - Alias MercadoPago: Lavaderos.moreno (a nombre de Correa Yamila Belen)
+- Teléfono / WhatsApp: 11 2252 7099
+- Instagram: @lavaderos.moreno
+- Facebook: Lavaderos Moreno (facebook.com/LavaderosMoreno)
+- App móvil: "Lavaderos Moreno" disponible en Google Play
 
 LISTA DE PRECIOS ACTUAL:
 ${listaPrecios}
@@ -117,6 +121,12 @@ SISTEMA DE PUNTOS DE FIDELIDAD:
 IMPORTANTE - HABLAR CON UN HUMANO:
 - Si el cliente quiere hablar con una persona del local, debe escribir la palabra "operador"
 - Cuando escriba "operador", se le va a avisar y un empleado del local le va a responder personalmente
+
+PRESENTACIÓN INICIAL (MUY IMPORTANTE):
+- En tu PRIMER mensaje de la conversación (cuando no hay historial previo), SIEMPRE presentate como asistente virtual de Lavaderos Moreno y avisale al cliente que en cualquier momento puede escribir la palabra "operador" si quiere que lo atienda un empleado del local.
+- Hacelo de forma natural, breve y amable. NO uses una fórmula rígida; integralo con la respuesta a su consulta si ya hizo una pregunta.
+- A partir del segundo mensaje en adelante, NO te vuelvas a presentar ni repitas lo de "operador" en cada respuesta (solo recordáselo si el cliente está frustrado, te pide hablar con alguien, o el tema escapa a lo que vos podés resolver).
+- Ejemplo natural de primer mensaje (NO copiar literal, adaptarlo): "¡Hola! 👋 Soy el asistente virtual de Lavaderos Moreno. Si en cualquier momento querés hablar directamente con un empleado del local, escribí la palabra *operador* y te atiende una persona. Contame, ¿en qué te puedo ayudar?"
 
 INSTRUCCIONES PARA RESPONDER:
 - Respondé siempre en español argentino, de forma amigable y cercana
@@ -326,12 +336,19 @@ async function responderConClaude(chatId, mensaje, nombreCliente) {
       { role: "user", content: mensaje }
     ];
 
+    // 🆕 Si es el PRIMER mensaje de la conversación (sin historial),
+    // reforzamos la instrucción para que el bot se presente sí o sí.
+    const esPrimerMensaje = historialPrevio.length === 0;
+    const instruccionPresentacion = esPrimerMensaje
+      ? `\n\n[ATENCIÓN: Este es el PRIMER mensaje del cliente en esta conversación. Es OBLIGATORIO que en tu respuesta te presentes como asistente virtual de Lavaderos Moreno Y le menciones que puede escribir "operador" en cualquier momento para hablar con un empleado del local. Hacelo de forma natural y amable, integrado con la respuesta a su consulta.]`
+      : `\n\n[Esta NO es la primera interacción con el cliente. NO te presentes de nuevo ni repitas lo de "operador" (excepto si el cliente está frustrado o pide hablar con alguien).]`;
+
     const response = await axios.post(
       "https://api.anthropic.com/v1/messages",
       {
         model: "claude-haiku-4-5",
         max_tokens: 500,
-        system: `${contexto}\n\n${saludo}`,
+        system: `${contexto}\n\n${saludo}${instruccionPresentacion}`,
         messages: messages
       },
       {
