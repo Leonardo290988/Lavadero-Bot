@@ -176,21 +176,94 @@ setInterval(() => {
   }
 }, 30 * 1000);
 
+// 🆕 MARCA INVISIBLE: caracteres de ancho cero que agregamos al final de cada
+// mensaje del bot. El cliente NO los ve, pero cuando el mensaje vuelve por
+// message_create podemos reconocerlo al instante. Un empleado escribiendo a
+// mano nunca va a poner estos caracteres, así que el match es 100% confiable.
+// (word-joiner + zero-width-space + zero-width-joiner + word-joiner)
+const MARCA_BOT = "\u2060\u200B\u200D\u2060";
+
+function agregarMarcaBot(texto) {
+  return (texto || "") + MARCA_BOT;
+}
+
+function tieneMarcaBot(texto) {
+  return typeof texto === "string" && texto.includes(MARCA_BOT);
+}
+
+// Normaliza un texto para comparar: saca invisibles, unifica espacios,
+// pasa a minúsculas y normaliza Unicode (para que emojis/saltos no rompan el match)
+function normalizarTexto(s) {
+  if (!s) return "";
+  return s
+    .normalize("NFC")
+    .replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, "") // quitar caracteres de ancho cero
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+// Distancia de Levenshtein (para medir parecido entre dos textos cortos)
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const fila = Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) fila[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let prev = fila[0];
+    fila[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = fila[j];
+      fila[j] = Math.min(
+        fila[j] + 1,
+        fila[j - 1] + 1,
+        prev + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+      prev = tmp;
+    }
+  }
+  return fila[b.length];
+}
+
+// ¿Dos textos normalizados son "el mismo" con cierta tolerancia? (>= 90% parecido)
+function textosSimilares(a, b) {
+  if (a === b) return true;
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return true;
+  // Para textos largos, comparar es caro: cortamos a 400 chars (suficiente)
+  const aa = a.slice(0, 400);
+  const bb = b.slice(0, 400);
+  const dist = levenshtein(aa, bb);
+  const parecido = 1 - dist / Math.max(aa.length, bb.length);
+  return parecido >= 0.9;
+}
+
 function registrarMensajeBot(texto) {
   mensajesEnviadosPorBot.push({
-    texto: texto.trim(),
+    texto: (texto || "").trim(),
+    normal: normalizarTexto(texto),
     timestamp: Date.now()
   });
 }
 
 function esMensajeDelBot(texto) {
+  if (!texto) return false;
+
+  // 1) MARCA INVISIBLE → reconocimiento instantáneo y 100% confiable
+  if (tieneMarcaBot(texto)) {
+    return true;
+  }
+
+  // 2) RESPALDO: match tolerante por contenido (por si la marca se perdiera)
   const ahora = Date.now();
-  const limpio = texto.trim();
+  const limpio = normalizarTexto(texto);
+  if (!limpio) return false;
 
   for (let i = mensajesEnviadosPorBot.length - 1; i >= 0; i--) {
     const entry = mensajesEnviadosPorBot[i];
     if ((ahora - entry.timestamp) > VENTANA_MATCH_BOT_MS) break;
-    if (entry.texto === limpio) {
+    if (entry.normal === limpio || textosSimilares(entry.normal, limpio)) {
       // Match: lo eliminamos para no matchearlo dos veces
       mensajesEnviadosPorBot.splice(i, 1);
       return true;
@@ -369,16 +442,20 @@ function pideOperador(texto) {
 }
 
 // 🆕 Helper para enviar mensajes "marcados" como del bot
-// Registra el texto + timestamp para distinguirlo después en message_create
+// Registra el texto limpio (para el respaldo) y envía el texto CON la marca
+// invisible al final, para que message_create lo reconozca al instante.
 async function enviarMensajeDelBot(msgOrChat, texto) {
-  // Registrar ANTES de enviar (para que el evento message_create encuentre el match)
+  // Registrar el texto LIMPIO antes de enviar (para el match de respaldo)
   registrarMensajeBot(texto);
+
+  // Enviar el texto CON la marca invisible
+  const textoConMarca = agregarMarcaBot(texto);
 
   let sent;
   if (msgOrChat.reply) {
-    sent = await msgOrChat.reply(texto);
+    sent = await msgOrChat.reply(textoConMarca);
   } else if (msgOrChat.sendMessage) {
-    sent = await msgOrChat.sendMessage(texto);
+    sent = await msgOrChat.sendMessage(textoConMarca);
   } else {
     return null;
   }
@@ -517,6 +594,78 @@ async function procesarBuffer(from) {
 }
 
 // ======================================
+// 🆕 TRANSCRIPCIÓN DE AUDIOS (Whisper / OpenAI)
+// ======================================
+const MAX_AUDIO_SEG = 120; // si el audio dura más de esto, pedimos que escriban
+
+// Llama a la API de Whisper de OpenAI para transcribir un audio de WhatsApp
+async function transcribirAudio(msg) {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("⚠️ Falta OPENAI_API_KEY: no se pueden transcribir audios");
+      return { ok: false, motivo: "sin_api_key" };
+    }
+
+    const media = await msg.downloadMedia();
+    if (!media || !media.data) {
+      return { ok: false, motivo: "sin_data" };
+    }
+
+    const buffer = Buffer.from(media.data, "base64");
+    const mimetype = (media.mimetype || "audio/ogg").split(";")[0];
+    const ext = mimetype.includes("mp4") || mimetype.includes("m4a") ? "m4a"
+              : mimetype.includes("mpeg") || mimetype.includes("mp3") ? "mp3"
+              : "ogg";
+
+    // FormData y Blob nativos (Node 18+)
+    const form = new FormData();
+    form.append("file", new Blob([buffer], { type: mimetype }), `audio.${ext}`);
+    form.append("model", "whisper-1");
+    form.append("language", "es");
+
+    const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: form
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("Error Whisper:", resp.status, errText.slice(0, 200));
+      return { ok: false, motivo: "api_error" };
+    }
+
+    const data = await resp.json();
+    const texto = (data.text || "").trim();
+    return { ok: true, texto };
+  } catch (err) {
+    console.error("Error transcribiendo audio:", err.message);
+    return { ok: false, motivo: "excepcion" };
+  }
+}
+
+// Detecta transcripciones vacías, demasiado cortas o "alucinaciones" típicas de
+// Whisper cuando el audio es ruido/silencio (devuelve textos basura conocidos)
+function transcripcionInvalida(texto) {
+  if (!texto) return true;
+  // Si casi no tiene letras/números, no sirve
+  if (texto.replace(/[^a-záéíóúñü0-9]/gi, "").length < 2) return true;
+
+  const t = texto.toLowerCase();
+  const basura = [
+    "subtítulos realizados por",
+    "subtitulado por",
+    "subtítulos por",
+    "gracias por ver el video",
+    "¡gracias por ver",
+    "amara.org",
+    "subtitles by",
+    "thanks for watching"
+  ];
+  return basura.some(b => t.includes(b));
+}
+
+// ======================================
 // MENSAJES ENTRANTES (DEL CLIENTE)
 // ======================================
 client.on("message", async (msg) => {
@@ -549,18 +698,42 @@ client.on("message", async (msg) => {
     return;
   }
 
-  // Responder audios (sin buffer, respuesta inmediata)
-  if (msg.type === "ptt" || msg.type === "audio") {
-    await new Promise(r => setTimeout(r, 2000 + Math.random() * 1000));
-    await msg.getChat().then(chat => chat.sendStateTyping());
-    await new Promise(r => setTimeout(r, 1500));
-    const respuesta = `Hola! 😊 Por el momento no podemos escuchar audios. Te pedimos que nos escribas tu consulta y te respondemos enseguida 🙏\n\nSi querés hablar con una persona del local, escribí "operador".`;
-    await enviarMensajeDelBot(msg, respuesta);
-    agregarAlHistorial(msg.from, "assistant", respuesta);
-    return;
-  }
+  // 🆕 AUDIOS: transcribir con Whisper y procesarlos como si fueran texto.
+  // Si el audio es muy largo o no se entiende, pedimos que escriban.
+  let textoEntrante = null;
 
-  if (!msg.body || msg.body.trim() === "") return;
+  if (msg.type === "ptt" || msg.type === "audio") {
+    const duracion = Number(msg.duration) || 0;
+
+    // Audio demasiado largo → pedir que escriba
+    if (duracion > MAX_AUDIO_SEG) {
+      await msg.getChat().then(c => c.sendStateTyping()).catch(() => {});
+      await new Promise(r => setTimeout(r, 1200));
+      const resp = `Uy, ese audio es bastante largo 😅 Para poder ayudarte bien, ¿me lo escribís en un mensaje? 🙏\n\nSi preferís hablar con una persona del local, escribí "operador".`;
+      await enviarMensajeDelBot(msg, resp);
+      agregarAlHistorial(msg.from, "assistant", resp);
+      return;
+    }
+
+    // Mostrar "escribiendo..." mientras transcribimos
+    await msg.getChat().then(c => c.sendStateTyping()).catch(() => {});
+    const resultado = await transcribirAudio(msg);
+
+    // No se pudo transcribir o no se entiende → pedir que escriba
+    if (!resultado.ok || transcripcionInvalida(resultado.texto)) {
+      const resp = `Perdón, no llegué a entender bien tu audio 🙈 ¿Me lo escribís en un mensaje así te ayudo? 🙏\n\nSi preferís hablar con una persona del local, escribí "operador".`;
+      await enviarMensajeDelBot(msg, resp);
+      agregarAlHistorial(msg.from, "assistant", resp);
+      return;
+    }
+
+    textoEntrante = resultado.texto;
+    console.log(`🎙️ Audio transcripto de ${msg.from}: "${textoEntrante}"`);
+  } else {
+    // Mensaje de texto normal
+    if (!msg.body || msg.body.trim() === "") return;
+    textoEntrante = msg.body.trim();
+  }
 
   // Buscar nombre del cliente
   let nombreCliente = null;
@@ -588,16 +761,16 @@ client.on("message", async (msg) => {
     }
   }
 
-  console.log(`Mensaje de ${nombreCliente || msg.from}: "${msg.body}"`);
+  console.log(`Mensaje de ${nombreCliente || msg.from}: "${textoEntrante}"`);
 
   if (bufferExistente) {
     clearTimeout(bufferExistente.timer);
-    bufferExistente.mensajes.push(msg.body.trim());
+    bufferExistente.mensajes.push(textoEntrante);
     bufferExistente.lastMsg = msg;
     bufferExistente.timer = setTimeout(() => procesarBuffer(msg.from), DEBOUNCE_MS);
   } else {
     const nuevoBuffer = {
-      mensajes: [msg.body.trim()],
+      mensajes: [textoEntrante],
       lastMsg: msg,
       nombreCliente,
       timer: setTimeout(() => procesarBuffer(msg.from), DEBOUNCE_MS)
@@ -689,7 +862,7 @@ app.post("/enviar", async (req, res) => {
     // 🆕 Registrar como mensaje del bot ANTES de enviar
     registrarMensajeBot(mensaje);
 
-    const sent = await client.sendMessage(chatIdFinal, mensaje);
+    const sent = await client.sendMessage(chatIdFinal, agregarMarcaBot(mensaje));
 
     // 🆕 Guardar mensajes automáticos del backend en el historial también
     agregarAlHistorial(chatIdFinal, "assistant", mensaje);
