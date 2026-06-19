@@ -38,6 +38,11 @@ let clientReady = false;
 let qrActual = null;
 let botStartTime = Date.now();
 
+// 🆕 ID único de esta instancia del bot (para detectar si hay más de una corriendo)
+const INSTANCE_ID = Math.random().toString(36).slice(2, 8).toUpperCase();
+const PROCESS_STARTED_AT = new Date().toISOString();
+console.log(`🤖 Instancia del bot iniciada: ${INSTANCE_ID} (${PROCESS_STARTED_AT})`);
+
 client.on("qr", async (qr) => {
   console.log("QR recibido, escanea con WhatsApp");
   qrcode.generate(qr, { small: true });
@@ -877,6 +882,45 @@ app.post("/enviar", async (req, res) => {
 
 app.get("/status", (req, res) => {
   res.json({ conectado: clientReady });
+});
+
+// 🆕 ENDPOINT DE DIAGNÓSTICO TEMPORAL
+// Muestra qué instancia responde, qué precios lee de la base, y si hay duplicados.
+// Abrir /diag y recargar varias veces:
+//  - Si "instancia" CAMBIA entre recargas → hay MÁS DE UNA instancia corriendo.
+//  - Si en "duplicados" aparece algo → hay servicios repetidos en la base.
+app.get("/diag", async (req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT id, nombre, precio, activo
+      FROM servicios
+      WHERE (activo = true OR activo IS NULL)
+        AND nombre != 'Servicio Valet 1/2'
+      ORDER BY nombre ASC, id ASC
+    `);
+
+    // Detectar nombres repetidos entre los servicios activos
+    const porNombre = {};
+    for (const fila of r.rows) {
+      porNombre[fila.nombre] = porNombre[fila.nombre] || [];
+      porNombre[fila.nombre].push({ id: fila.id, precio: Number(fila.precio) });
+    }
+    const duplicados = Object.entries(porNombre)
+      .filter(([, arr]) => arr.length > 1)
+      .map(([nombre, arr]) => ({ nombre, filas: arr }));
+
+    res.json({
+      instancia: INSTANCE_ID,
+      procesoIniciado: PROCESS_STARTED_AT,
+      conectadoWhatsApp: clientReady,
+      cantidadServiciosActivos: r.rows.length,
+      hayDuplicados: duplicados.length > 0,
+      duplicados,
+      precios: r.rows.map(s => ({ id: s.id, nombre: s.nombre, precio: Number(s.precio), activo: s.activo }))
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, instancia: INSTANCE_ID });
+  }
 });
 
 // 🆕 Endpoint para ver el estado del modo humano (debug)
