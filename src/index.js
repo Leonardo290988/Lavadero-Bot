@@ -8,6 +8,23 @@ const axios = require("axios");
 const app = express();
 app.use(express.json());
 
+// ======================================
+// 🛡️ RED DE SEGURIDAD ANTI-CRASH
+// whatsapp-web.js (puppeteer) tira errores sueltos con los chats @lid.
+// Sin esto, un solo error mata TODO el proceso y el bot deja de responder
+// mensajes Y de enviar los avisos de cierre de órdenes.
+// Con esto, el bot loguea el error y SIGUE FUNCIONANDO.
+// ======================================
+process.on("unhandledRejection", (err) => {
+  console.error("⚠️ Promesa rechazada sin capturar (el bot sigue vivo):",
+    err && err.message ? err.message : err);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("⚠️ Excepción no capturada (el bot sigue vivo):",
+    err && err.message ? err.message : err);
+});
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
@@ -37,11 +54,6 @@ const client = new Client({
 let clientReady = false;
 let qrActual = null;
 let botStartTime = Date.now();
-
-// 🆕 ID único de esta instancia del bot (para detectar si hay más de una corriendo)
-const INSTANCE_ID = Math.random().toString(36).slice(2, 8).toUpperCase();
-const PROCESS_STARTED_AT = new Date().toISOString();
-console.log(`🤖 Instancia del bot iniciada: ${INSTANCE_ID} (${PROCESS_STARTED_AT})`);
 
 client.on("qr", async (qr) => {
   console.log("QR recibido, escanea con WhatsApp");
@@ -106,6 +118,19 @@ INFORMACIÓN ADICIONAL SOBRE PRECIOS:
 - Las frazadas tienen el mismo precio que los acolchados del mismo tamaño y tipo
 - Las frazadas entran en la promo 3x2 junto con los acolchados (se pueden combinar)
 
+⚠️ MUY IMPORTANTE - ACOLCHADOS: LAVADO SOLO vs LAVADO Y SECADO:
+- Para los acolchados hay DOS tipos de servicio con precios distintos:
+  1) "Lavado Acolchado..." → es SOLO el lavado (NO incluye secado). Es el más barato.
+  2) "Acolchado..." (sin la palabra "Lavado" adelante) → es el servicio COMPLETO: lavado Y secado. Es el que la mayoría de la gente quiere.
+- Cuando un cliente pregunta "cuánto sale lavar un acolchado" (de cualquier tamaño/tipo), NUNCA le des solo el precio del "Lavado Acolchado..." porque es incompleto y se va a confundir.
+- En vez de eso, SIEMPRE aclarale las dos opciones con sus precios. Por ejemplo, si pregunta por un acolchado 2 ½ doble, respondé algo como:
+  "Para el acolchado de 2 plazas y media doble tenemos dos opciones:
+   • Lavado y secado completo: $23.000
+   • Solo lavado (sin secado): $19.000
+   La mayoría elige el lavado y secado completo. ¿Cuál te interesa?"
+- Usá SIEMPRE los precios reales de la lista de arriba según el tamaño y tipo que mencione el cliente (simple/doble/plumas, 1 ½ o 2 ½).
+- Si el cliente no aclara el tamaño o tipo, preguntale para darle el precio exacto.
+
 SERVICIO VALET (lavado de ropa):
 - El Servicio Valet incluye el lavado y secado de ropa
 - Se cobra POR CANASTO (no por prenda individual ni por kilo)
@@ -138,6 +163,7 @@ INSTRUCCIONES PARA RESPONDER:
 - Usá "vos" en lugar de "tú"
 - Sé conciso pero completo
 - Si preguntan por precios, mostrá la lista completa
+- Si preguntan cuánto sale lavar un acolchado (o frazada), aclará SIEMPRE las dos opciones: "lavado y secado completo" y "solo lavado", con sus precios. Nunca des solo el precio del lavado suelto.
 - Si preguntan por el estado de su orden, deciles que lo pueden ver desde la app
 - Si te preguntan algo que NO podés resolver o el cliente parece insatisfecho, sugerile que escriba "operador" para hablar con una persona
 - No inventes información que no tenés
@@ -456,15 +482,30 @@ async function enviarMensajeDelBot(msgOrChat, texto) {
   // Enviar el texto CON la marca invisible
   const textoConMarca = agregarMarcaBot(texto);
 
-  let sent;
-  if (msgOrChat.reply) {
-    sent = await msgOrChat.reply(textoConMarca);
-  } else if (msgOrChat.sendMessage) {
-    sent = await msgOrChat.sendMessage(textoConMarca);
-  } else {
+  // 🛡️ Intentamos responder citando el mensaje. Si falla (pasa con los chats
+  // @lid), reintentamos enviando al chat directo para que el mensaje igual llegue.
+  try {
+    if (msgOrChat.reply) {
+      return await msgOrChat.reply(textoConMarca);
+    }
+    if (msgOrChat.sendMessage) {
+      return await msgOrChat.sendMessage(textoConMarca);
+    }
+    return null;
+  } catch (err) {
+    console.error("⚠️ Falló el envío citado, reintentando directo:",
+      err && err.message ? err.message : err);
+    try {
+      const destino = msgOrChat.from || msgOrChat.id?._serialized;
+      if (destino) {
+        return await client.sendMessage(destino, textoConMarca);
+      }
+    } catch (err2) {
+      console.error("❌ No se pudo enviar el mensaje:",
+        err2 && err2.message ? err2.message : err2);
+    }
     return null;
   }
-  return sent;
 }
 
 // ======================================
@@ -520,7 +561,20 @@ async function responderConClaude(chatId, mensaje, nombreCliente) {
 const mensajesBuffer = new Map();
 const DEBOUNCE_MS = 5000; // 🆕 5 segundos (antes era 6)
 
+// 🛡️ Wrapper con try/catch: si algo falla procesando un mensaje,
+// se loguea el error pero el bot NO se cae ni deja de atender a los demás.
 async function procesarBuffer(from) {
+  try {
+    await procesarBufferInterno(from);
+  } catch (err) {
+    console.error(`❌ Error procesando mensaje de ${from} (el bot sigue vivo):`,
+      err && err.message ? err.message : err);
+    // Limpiamos el buffer para que no quede trabado
+    mensajesBuffer.delete(from);
+  }
+}
+
+async function procesarBufferInterno(from) {
   const buffer = mensajesBuffer.get(from);
   if (!buffer) return;
 
@@ -544,7 +598,7 @@ async function procesarBuffer(from) {
   if (pideOperador(textoCompleto)) {
     activarModoHumano(from);
 
-    await lastMsg.getChat().then(chat => chat.sendStateTyping());
+    await mostrarEscribiendo(lastMsg);
     await new Promise(r => setTimeout(r, 1500));
 
     const saludo = nombreCliente ? `Perfecto ${nombreCliente}` : "Perfecto";
@@ -578,8 +632,8 @@ async function procesarBuffer(from) {
   }
 
   // Flujo normal: responder con Claude usando historial
-  await client.sendPresenceAvailable();
-  await lastMsg.getChat().then(chat => chat.sendStateTyping());
+  try { await client.sendPresenceAvailable(); } catch (e) { /* no crítico */ }
+  await mostrarEscribiendo(lastMsg);
   await new Promise(r => setTimeout(r, 1500 + Math.random() * 1500));
 
   const respuesta = await responderConClaude(from, textoCompleto, nombreCliente);
@@ -668,6 +722,17 @@ function transcripcionInvalida(texto) {
     "thanks for watching"
   ];
   return basura.some(b => t.includes(b));
+}
+
+// 🛡️ Helper seguro: mostrar "escribiendo..." sin riesgo de crashear.
+// getChat() falla seguido con los chats @lid; si falla, seguimos igual.
+async function mostrarEscribiendo(msg) {
+  try {
+    const chat = await msg.getChat();
+    await chat.sendStateTyping();
+  } catch (e) {
+    // No es crítico: si no se puede mostrar "escribiendo", el bot igual responde
+  }
 }
 
 // ======================================
@@ -882,45 +947,6 @@ app.post("/enviar", async (req, res) => {
 
 app.get("/status", (req, res) => {
   res.json({ conectado: clientReady });
-});
-
-// 🆕 ENDPOINT DE DIAGNÓSTICO TEMPORAL
-// Muestra qué instancia responde, qué precios lee de la base, y si hay duplicados.
-// Abrir /diag y recargar varias veces:
-//  - Si "instancia" CAMBIA entre recargas → hay MÁS DE UNA instancia corriendo.
-//  - Si en "duplicados" aparece algo → hay servicios repetidos en la base.
-app.get("/diag", async (req, res) => {
-  try {
-    const r = await pool.query(`
-      SELECT id, nombre, precio, activo
-      FROM servicios
-      WHERE (activo = true OR activo IS NULL)
-        AND nombre != 'Servicio Valet 1/2'
-      ORDER BY nombre ASC, id ASC
-    `);
-
-    // Detectar nombres repetidos entre los servicios activos
-    const porNombre = {};
-    for (const fila of r.rows) {
-      porNombre[fila.nombre] = porNombre[fila.nombre] || [];
-      porNombre[fila.nombre].push({ id: fila.id, precio: Number(fila.precio) });
-    }
-    const duplicados = Object.entries(porNombre)
-      .filter(([, arr]) => arr.length > 1)
-      .map(([nombre, arr]) => ({ nombre, filas: arr }));
-
-    res.json({
-      instancia: INSTANCE_ID,
-      procesoIniciado: PROCESS_STARTED_AT,
-      conectadoWhatsApp: clientReady,
-      cantidadServiciosActivos: r.rows.length,
-      hayDuplicados: duplicados.length > 0,
-      duplicados,
-      precios: r.rows.map(s => ({ id: s.id, nombre: s.nombre, precio: Number(s.precio), activo: s.activo }))
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message, instancia: INSTANCE_ID });
-  }
 });
 
 // 🆕 Endpoint para ver el estado del modo humano (debug)
