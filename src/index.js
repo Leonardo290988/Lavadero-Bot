@@ -34,7 +34,21 @@ const pool = new Pool({
 // CLIENTE WHATSAPP
 // ======================================
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: "/tmp/.wwebjs_auth" }),
+  // 🆕 Ruta de la sesión configurable por variable de entorno.
+  // En Railway, /tmp se BORRA en cada reinicio → hay que reescanear el QR siempre.
+  // Si montás un Volume y ponés WWEBJS_DATA_PATH=/data/.wwebjs_auth, la sesión persiste.
+  authStrategy: new LocalAuth({
+    dataPath: process.env.WWEBJS_DATA_PATH || "/tmp/.wwebjs_auth"
+  }),
+
+  // 🆕 Si WhatsApp abre la sesión en otro lado, tomamos el control en vez de
+  // quedarnos desconectados en loop.
+  takeoverOnConflict: true,
+  takeoverTimeoutMs: 0,
+
+  // 🆕 Reintentar automáticamente si falla la autenticación
+  restartOnAuthFail: true,
+
   puppeteer: {
     headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
@@ -45,7 +59,8 @@ const client = new Client({
       "--disable-accelerated-2d-canvas",
       "--no-first-run",
       "--no-zygote",
-      "--single-process",
+      // ❌ "--single-process" ELIMINADO: es inestable con Chromium headless y
+      // provoca los errores "Execution context was destroyed" y desconexiones.
       "--disable-gpu"
     ]
   }
@@ -71,6 +86,17 @@ client.on("ready", () => {
 client.on("disconnected", (reason) => {
   console.log("Bot desconectado:", reason);
   clientReady = false;
+
+  // 🆕 Reconexión automática: si WhatsApp corta la sesión, intentamos volver
+  // solos en vez de quedarnos esperando a que alguien reinicie el servicio.
+  // (Si el motivo es LOGOUT, va a pedir QR nuevo; si fue un corte pasajero,
+  // se reconecta solo con la sesión guardada.)
+  setTimeout(() => {
+    console.log("🔄 Intentando reconectar...");
+    client.initialize().catch(err => {
+      console.error("Error al reconectar:", err && err.message ? err.message : err);
+    });
+  }, 10000);
 });
 
 // ======================================
@@ -739,14 +765,25 @@ async function mostrarEscribiendo(msg) {
 // MENSAJES ENTRANTES (DEL CLIENTE)
 // ======================================
 client.on("message", async (msg) => {
-  if (msg.from.includes("@g.us")) return;
-  if (msg.from.includes("@broadcast")) return;
-  if (msg.from === "status@broadcast") return;
-  if (msg.type === "e2e_notification") return;
-  if (msg.type === "notification_template") return;
-  if (msg.fromMe) return; // Los `fromMe` se manejan en message_create
+  // 🔍 DIAGNÓSTICO: log de TODO lo que llega, antes de cualquier filtro.
+  console.log(`📥 Mensaje entrante | from: ${msg.from} | tipo: ${msg.type} | fromMe: ${msg.fromMe} | body: "${(msg.body || "").slice(0, 40)}"`);
+
+  if (msg.from.includes("@g.us")) { console.log("   ↳ descartado: es un grupo"); return; }
+  if (msg.from.includes("@broadcast")) { console.log("   ↳ descartado: es broadcast"); return; }
+  if (msg.from === "status@broadcast") { console.log("   ↳ descartado: es estado"); return; }
+  if (msg.type === "e2e_notification") { console.log("   ↳ descartado: notificación e2e"); return; }
+  if (msg.type === "notification_template") { console.log("   ↳ descartado: notificación template"); return; }
+  if (msg.fromMe) { console.log("   ↳ descartado: fromMe (lo maneja message_create)"); return; }
+
+  // 🛡️ Filtro de mensajes viejos, ahora con margen de tolerancia.
+  // Antes descartaba todo lo anterior al arranque exacto; si el reloj del
+  // servidor estaba desfasado respecto a WhatsApp, se descartaban TODOS.
   const msgTime = msg.timestamp * 1000;
-  if (msgTime < botStartTime) return;
+  const MARGEN_MS = 2 * 60 * 1000; // 2 minutos de tolerancia
+  if (msgTime < (botStartTime - MARGEN_MS)) {
+    console.log(`   ↳ descartado: mensaje viejo (msg: ${new Date(msgTime).toISOString()} | arranque: ${new Date(botStartTime).toISOString()})`);
+    return;
+  }
 
   // 🆕 Si el chat estaba en modo humano y llega mensaje del cliente, refrescar timer
   // (cada actividad del cliente extiende el modo humano otros 5 min)
