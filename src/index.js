@@ -1,4 +1,6 @@
 const { Client, LocalAuth } = require("whatsapp-web.js");
+const fs = require("fs");
+const path = require("path");
 const qrcode = require("qrcode-terminal");
 const QRCode = require("qrcode");
 const express = require("express");
@@ -31,15 +33,44 @@ const pool = new Pool({
 });
 
 // ======================================
+// 🧹 LIMPIEZA DE CANDADOS DE CHROMIUM
+// Cuando Railway apaga el contenedor de golpe (redeploy/reinicio), Chromium
+// deja archivos de lock (SingletonLock/Cookie/Socket) dentro del perfil.
+// Como ahora el perfil vive en un volumen que PERSISTE, esos locks sobreviven
+// y al arrancar Chromium se niega a abrir ("profile appears to be in use").
+// Los borramos en cada arranque: si el proceso viejo ya no existe, son basura.
+// ======================================
+const DATA_PATH = process.env.WWEBJS_DATA_PATH || "/tmp/.wwebjs_auth";
+
+function limpiarLocksChromium(dir) {
+  try {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const completo = path.join(dir, entry.name);
+      if (/^Singleton/.test(entry.name)) {
+        // Puede ser symlink o archivo: rmSync con force sirve para ambos
+        fs.rmSync(completo, { force: true });
+        console.log(`🧹 Candado de Chromium eliminado: ${entry.name}`);
+      } else if (entry.isDirectory()) {
+        limpiarLocksChromium(completo);
+      }
+    }
+  } catch (err) {
+    console.error("Error limpiando candados de Chromium:",
+      err && err.message ? err.message : err);
+  }
+}
+
+limpiarLocksChromium(DATA_PATH);
+
+// ======================================
 // CLIENTE WHATSAPP
 // ======================================
 const client = new Client({
   // 🆕 Ruta de la sesión configurable por variable de entorno.
   // En Railway, /tmp se BORRA en cada reinicio → hay que reescanear el QR siempre.
   // Si montás un Volume y ponés WWEBJS_DATA_PATH=/data/.wwebjs_auth, la sesión persiste.
-  authStrategy: new LocalAuth({
-    dataPath: process.env.WWEBJS_DATA_PATH || "/tmp/.wwebjs_auth"
-  }),
+  authStrategy: new LocalAuth({ dataPath: DATA_PATH }),
 
   // 🆕 Si WhatsApp abre la sesión en otro lado, tomamos el control en vez de
   // quedarnos desconectados en loop.
@@ -1045,4 +1076,28 @@ app.listen(PORT, () => {
   console.log(`API del bot corriendo en puerto ${PORT}`);
 });
 
-client.initialize();
+// 🆕 Arranque con reintentos: si Chromium no logra abrir (perfil bloqueado,
+// falta de memoria, etc.), limpiamos los candados y reintentamos en vez de
+// quedarnos sin WhatsApp hasta que alguien reinicie el servicio a mano.
+let intentosArranque = 0;
+
+function iniciarCliente() {
+  intentosArranque++;
+  client.initialize().catch(err => {
+    console.error(`❌ Falló el arranque del cliente (intento ${intentosArranque}):`,
+      err && err.message ? err.message : err);
+
+    if (intentosArranque < 5) {
+      const esperaMs = 15000;
+      console.log(`🔄 Reintentando en ${esperaMs / 1000}s...`);
+      setTimeout(() => {
+        limpiarLocksChromium(DATA_PATH);
+        iniciarCliente();
+      }, esperaMs);
+    } else {
+      console.error("❌ No se pudo iniciar el cliente tras 5 intentos. Revisar el volumen/permisos.");
+    }
+  });
+}
+
+iniciarCliente();
