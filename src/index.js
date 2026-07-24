@@ -164,8 +164,21 @@ INFORMACIÓN DEL NEGOCIO:
 - Facebook: Lavaderos Moreno (facebook.com/LavaderosMoreno)
 - App móvil: "Lavaderos Moreno" disponible en Google Play
 
-LISTA DE PRECIOS ACTUAL:
+LISTA DE PRECIOS ACTUAL (solo para tu referencia interna):
 ${listaPrecios}
+
+🚨 REGLA CRÍTICA SOBRE PRECIOS — LEER CON ATENCIÓN:
+- NUNCA escribas un precio con números en tu respuesta. NUNCA. Ni uno solo.
+- Si el cliente pregunta por CUALQUIER precio (de un acolchado, de ropa, de lo que sea, o por la lista completa), escribí exactamente el marcador ${MARCADOR_PRECIOS} en el lugar donde debería ir la lista.
+- El sistema reemplaza automáticamente ese marcador por la lista completa de precios actualizada. Vos no tenés que escribir ningún número.
+- Ejemplo de respuesta CORRECTA si preguntan "cuánto sale lavar un acolchado de 2 plazas y media":
+  "¡Hola! Te paso la lista completa así ves todas las opciones 😊
+
+  ${MARCADOR_PRECIOS}
+
+  Para el acolchado de 2 plazas y media fijate que hay dos opciones: el lavado y secado completo, o solo el lavado. La mayoría elige el completo. ¿Cuál te sirve?"
+- Ejemplo INCORRECTO (NUNCA hagas esto): "El acolchado de 2 plazas y media sale $21.000" ← ¡PROHIBIDO escribir números de precios!
+- Podés y debés explicar con PALABRAS las diferencias entre servicios (por ejemplo, que "Lavado Acolchado..." es solo lavado sin secado, y "Acolchado..." es lavado y secado completo), pero SIN mencionar los importes.
 
 PROMOCIONES VIGENTES:
 - Acolchados y Frazadas 3x2: llevás 3 acolchados/frazadas (combinables entre sí) y pagás 2 (el más barato es gratis). Válido de Martes a Viernes.
@@ -176,17 +189,13 @@ INFORMACIÓN ADICIONAL SOBRE PRECIOS:
 - Las frazadas entran en la promo 3x2 junto con los acolchados (se pueden combinar)
 
 ⚠️ MUY IMPORTANTE - ACOLCHADOS: LAVADO SOLO vs LAVADO Y SECADO:
-- Para los acolchados hay DOS tipos de servicio con precios distintos:
+- Para los acolchados y frazadas hay DOS tipos de servicio con precios distintos:
   1) "Lavado Acolchado..." → es SOLO el lavado (NO incluye secado). Es el más barato.
   2) "Acolchado..." (sin la palabra "Lavado" adelante) → es el servicio COMPLETO: lavado Y secado. Es el que la mayoría de la gente quiere.
-- Cuando un cliente pregunta "cuánto sale lavar un acolchado" (de cualquier tamaño/tipo), NUNCA le des solo el precio del "Lavado Acolchado..." porque es incompleto y se va a confundir.
-- En vez de eso, SIEMPRE aclarale las dos opciones con sus precios. Por ejemplo, si pregunta por un acolchado 2 ½ doble, respondé algo como:
-  "Para el acolchado de 2 plazas y media doble tenemos dos opciones:
-   • Lavado y secado completo: $23.000
-   • Solo lavado (sin secado): $19.000
-   La mayoría elige el lavado y secado completo. ¿Cuál te interesa?"
-- Usá SIEMPRE los precios reales de la lista de arriba según el tamaño y tipo que mencione el cliente (simple/doble/plumas, 1 ½ o 2 ½).
-- Si el cliente no aclara el tamaño o tipo, preguntale para darle el precio exacto.
+- Cuando un cliente pregunta "cuánto sale lavar un acolchado", en general quiere el servicio COMPLETO (lavado y secado), aunque diga solo "lavar".
+- Mandá la lista completa con ${MARCADOR_PRECIOS} y explicale CON PALABRAS (sin números) que hay dos opciones: el lavado y secado completo, y el lavado solo sin secado; y que la mayoría elige el completo.
+- En la lista que se envía, los servicios están agrupados justamente en esas dos categorías, así que el cliente puede ver claramente la diferencia.
+- Si el cliente no aclara el tamaño o tipo (simple/doble/plumas, 1 ½ o 2 ½), preguntale para orientarlo mejor, pero igual mandale la lista.
 
 SERVICIO VALET (lavado de ropa):
 - El Servicio Valet incluye el lavado y secado de ropa
@@ -219,8 +228,8 @@ INSTRUCCIONES PARA RESPONDER:
 - Respondé siempre en español argentino, de forma amigable y cercana
 - Usá "vos" en lugar de "tú"
 - Sé conciso pero completo
-- Si preguntan por precios, mostrá la lista completa
-- Si preguntan cuánto sale lavar un acolchado (o frazada), aclará SIEMPRE las dos opciones: "lavado y secado completo" y "solo lavado", con sus precios. Nunca des solo el precio del lavado suelto.
+- Si preguntan por CUALQUIER precio, escribí el marcador ${MARCADOR_PRECIOS} (nunca escribas números de precios vos)
+- Si preguntan cuánto sale lavar un acolchado (o frazada), mandá la lista con el marcador y aclarales con palabras que hay dos opciones: "lavado y secado completo" y "solo lavado", y que la mayoría elige el completo
 - Si preguntan por el estado de su orden, deciles que lo pueden ver desde la app
 - Si te preguntan algo que NO podés resolver o el cliente parece insatisfecho, sugerile que escriba "operador" para hablar con una persona
 - No inventes información que no tenés
@@ -613,6 +622,97 @@ async function responderConClaude(chatId, mensaje, nombreCliente) {
 }
 
 // ======================================
+// 🆕 LISTA DE PRECIOS GENERADA POR CÓDIGO (no por el modelo)
+// Los precios los escribe el código leyendo la base, así es IMPOSIBLE que el
+// bot invente, confunda o desactualice un número. Claude solo pone el marcador
+// [LISTA_PRECIOS] y acá lo reemplazamos por la lista real.
+// ======================================
+const MARCADOR_PRECIOS = "[LISTA_PRECIOS]";
+
+async function generarListaPreciosWhatsApp() {
+  const servicios = await pool.query(`
+    SELECT nombre, precio FROM servicios
+    WHERE (activo = true OR activo IS NULL)
+      AND nombre != 'Servicio Valet 1/2'
+    ORDER BY precio ASC
+  `);
+
+  const fmt = (p) => `$${Number(p).toLocaleString("es-AR")}`;
+
+  const completos = [];   // "Acolchado ..." → incluye lavado Y secado
+  const soloLavado = [];  // "Lavado Acolchado ..." → sin secado
+  const otros = [];
+  let valet = null;
+
+  for (const s of servicios.rows) {
+    const n = (s.nombre || "").trim();
+    if (/^servicio valet$/i.test(n)) valet = s;
+    else if (/^lavado acolchado/i.test(n)) soloLavado.push(s);
+    else if (/^acolchado/i.test(n)) completos.push(s);
+    else otros.push(s);
+  }
+
+  let txt = "*LISTA DE PRECIOS* 📋";
+
+  if (completos.length) {
+    txt += "\n\n*Acolchados y frazadas — lavado y secado (completo)*\n";
+    txt += completos.map(s => `• ${s.nombre}: ${fmt(s.precio)}`).join("\n");
+  }
+
+  if (soloLavado.length) {
+    txt += "\n\n*Acolchados y frazadas — SOLO lavado (sin secado)*\n";
+    txt += soloLavado.map(s => `• ${s.nombre}: ${fmt(s.precio)}`).join("\n");
+  }
+
+  if (otros.length) {
+    txt += "\n\n*Otros servicios*\n";
+    txt += otros.map(s => `• ${s.nombre}: ${fmt(s.precio)}`).join("\n");
+  }
+
+  if (valet) {
+    txt += `\n\n*Servicio Valet* (lavado profesional por canasto)\n• ${valet.nombre}: ${fmt(valet.precio)}`;
+  }
+
+  txt += "\n\n_Las frazadas valen igual que los acolchados del mismo tamaño._";
+  txt += "\n_Promo 3x2 en acolchados, frazadas y camperones: de martes a viernes._";
+
+  return txt;
+}
+
+// Detecta si el cliente está preguntando por precios (para el respaldo)
+function preguntaPorPrecios(texto) {
+  if (!texto) return false;
+  const t = texto.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return /\b(precio|precios|tarifa|tarifas|valor|valores|cotiza)/.test(t)
+      || /cuanto\s+(sale|cuesta|vale|es|seria|saldria|me\s+sale|salen|cuestan|valen)/.test(t)
+      || /que\s+precio/.test(t);
+}
+
+// Reemplaza el marcador por la lista real. Si el cliente preguntó por precios
+// y el modelo NO puso el marcador, la adjuntamos igual al final (respaldo).
+async function inyectarPrecios(respuesta, textoCliente) {
+  try {
+    const incluyeMarcador = respuesta.includes(MARCADOR_PRECIOS);
+    if (!incluyeMarcador && !preguntaPorPrecios(textoCliente)) {
+      return respuesta;
+    }
+
+    const lista = await generarListaPreciosWhatsApp();
+
+    if (incluyeMarcador) {
+      return respuesta.split(MARCADOR_PRECIOS).join(lista);
+    }
+    // Respaldo: preguntó por precios pero el modelo no puso el marcador
+    console.log("💲 Adjuntando lista de precios (respaldo: faltaba el marcador)");
+    return `${respuesta}\n\n${lista}`;
+  } catch (err) {
+    console.error("Error inyectando precios:", err && err.message ? err.message : err);
+    // Si falla, al menos sacamos el marcador para que no se vea feo
+    return respuesta.split(MARCADOR_PRECIOS).join("").trim();
+  }
+}
+
+// ======================================
 // BUFFER DE MENSAJES (debounce por número)
 // ======================================
 const mensajesBuffer = new Map();
@@ -699,8 +799,10 @@ async function procesarBufferInterno(from) {
   agregarAlHistorial(from, "user", textoCompleto);
 
   if (respuesta) {
-    await enviarMensajeDelBot(lastMsg, respuesta);
-    agregarAlHistorial(from, "assistant", respuesta);
+    // 🆕 Reemplazar el marcador por la lista de precios REAL de la base
+    const respuestaFinal = await inyectarPrecios(respuesta, textoCompleto);
+    await enviarMensajeDelBot(lastMsg, respuestaFinal);
+    agregarAlHistorial(from, "assistant", respuestaFinal);
   } else {
     const saludo = nombreCliente ? `Hola ${nombreCliente}!` : "Hola!";
     const fallback = `${saludo} 👋 Gracias por escribirnos. En breve te atendemos 😊\n\nSi querés hablar con una persona del local, escribí "operador".`;
