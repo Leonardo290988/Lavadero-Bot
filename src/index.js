@@ -72,6 +72,17 @@ const client = new Client({
   // Si montás un Volume y ponés WWEBJS_DATA_PATH=/data/.wwebjs_auth, la sesión persiste.
   authStrategy: new LocalAuth({ dataPath: DATA_PATH }),
 
+  // 🆕 Fijamos la versión de WhatsApp Web para no quedar a merced de la build
+  // que sirva WhatsApp ese día. Las builds nuevas (2.3000.x) rompen la inyección
+  // interna de whatsapp-web.js y provocan el error "Cannot read properties of
+  // undefined (reading 'getChat')" al ENVIAR mensajes → el bot deja de responder.
+  // Si esta build deja de andar, se cambia por otra del repo wa-version.
+  webVersionCache: {
+    type: "remote",
+    remotePath:
+      "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1023810332.html",
+  },
+
   // 🆕 Si WhatsApp abre la sesión en otro lado, tomamos el control en vez de
   // quedarnos desconectados en loop.
   takeoverOnConflict: true,
