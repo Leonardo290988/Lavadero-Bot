@@ -108,6 +108,25 @@ const client = new Client({
   }
 });
 
+// ======================================
+// 🆕 APAGADO AUTOMÁTICO FUERA DE HORARIO (ahorro de RAM)
+// El lavadero atiende L-S de 9 a 18. El bot se apaga solo a las 18:00 (ARG)
+// para no pagar memoria las 24hs. Railway lo vuelve a prender a las 9:00 con
+// el Cron configurado en Settings. La sesión queda guardada en el Volume,
+// así que NO pide QR de nuevo al volver a arrancar.
+// ======================================
+const HORA_CIERRE_ARG = 18; // se apaga a las 18:00 hora Argentina
+
+setInterval(() => {
+  const ahora = new Date();
+  // Railway corre en UTC; Argentina es UTC-3 (sin horario de verano).
+  const horaArg = (ahora.getUTCHours() - 3 + 24) % 24;
+  if (horaArg >= HORA_CIERRE_ARG) {
+    console.log(`🌙 Son las ${horaArg}hs ARG (fuera de horario). Apagando para ahorrar recursos...`);
+    process.exit(0); // salida limpia → Railway NO lo reinicia hasta el próximo Cron
+  }
+}, 60 * 1000); // chequea cada minuto
+
 let clientReady = false;
 let qrActual = null;
 let botStartTime = Date.now();
@@ -123,6 +142,9 @@ client.on("ready", () => {
   clientReady = true;
   qrActual = null;
   botStartTime = Date.now();
+
+  // 🆕 Al arrancar a la mañana, revisar y contestar lo que entró de noche.
+  revisarNoLeidosAlArrancar();
 });
 
 client.on("disconnected", (reason) => {
@@ -820,6 +842,101 @@ async function procesarBufferInterno(from) {
     await enviarMensajeDelBot(lastMsg, fallback);
     agregarAlHistorial(from, "assistant", fallback);
   }
+}
+
+// ======================================
+// 🆕 REPASO DE MENSAJES NO LEÍDOS AL ARRANCAR
+// Cuando el bot arranca a la mañana (tras el apagado nocturno), WhatsApp le
+// sincroniza los mensajes que entraron de noche. El handler normal los descarta
+// por "viejos", así que acá los recuperamos a mano: buscamos los chats con
+// mensajes sin leer y los procesamos como si acabaran de llegar, reutilizando
+// todo el flujo de siempre (Claude, precios, historial, modo humano).
+// ======================================
+let yaRevisadoAlArrancar = false;
+
+async function revisarNoLeidosAlArrancar() {
+  if (yaRevisadoAlArrancar) return;        // solo una vez por arranque
+  yaRevisadoAlArrancar = true;
+
+  console.log("🌅 Esperando sincronización para revisar mensajes no leídos...");
+  await new Promise(r => setTimeout(r, 20000)); // 20s; subilo si de noche entran muchos
+
+  let chats = [];
+  try {
+    chats = await client.getChats();
+  } catch (e) {
+    console.error("Error obteniendo chats al arrancar:", e && e.message ? e.message : e);
+    return;
+  }
+
+  const noLeidos = chats.filter(c =>
+    c.unreadCount > 0 &&
+    !c.id._serialized.includes("@g.us") &&
+    !c.id._serialized.includes("@broadcast") &&
+    c.id._serialized !== "status@broadcast"
+  );
+
+  console.log(`🌅 Chats con mensajes sin leer: ${noLeidos.length}`);
+
+  for (const chat of noLeidos) {
+    const from = chat.id._serialized;
+    try {
+      if (estaEnModoHumano(from)) {
+        console.log(`   ↳ ${from}: en modo humano, no se responde`);
+        continue;
+      }
+
+      // Traemos los últimos mensajes y nos quedamos con los del cliente que
+      // llegaron DESPUÉS de nuestra última respuesta (para no recontestar
+      // conversaciones ya atendidas).
+      const mensajes = await chat.fetchMessages({ limit: 15 });
+      const idxUltimaNuestra = mensajes.map(m => m.fromMe).lastIndexOf(true);
+      const pendientes = idxUltimaNuestra === -1 ? mensajes : mensajes.slice(idxUltimaNuestra + 1);
+      const textos = pendientes
+        .filter(m => !m.fromMe && m.body && m.body.trim())
+        .map(m => m.body.trim());
+
+      if (textos.length === 0) {
+        console.log(`   ↳ ${from}: sin texto para responder (audio/imagen?), lo dejo para el empleado`);
+        continue;
+      }
+
+      const lastMsg = pendientes[pendientes.length - 1];
+
+      // Buscar nombre del cliente (igual que en el handler normal)
+      let nombreCliente = null;
+      try {
+        const contact = await lastMsg.getContact();
+        const ultimos10 = (contact.number || "").slice(-10);
+        if (ultimos10.length >= 8) {
+          const r = await pool.query(
+            `SELECT nombre FROM clientes
+             WHERE REGEXP_REPLACE(telefono, '[^0-9]', '', 'g') LIKE $1 LIMIT 1`,
+            [`%${ultimos10}%`]
+          );
+          if (r.rows.length > 0) nombreCliente = r.rows[0].nombre.split(" ")[0];
+        }
+      } catch (e) { /* sin nombre, Claude saluda genérico */ }
+
+      console.log(`   ↳ ${from} (${nombreCliente || "sin nombre"}): "${textos.join(" ").slice(0, 50)}"`);
+
+      // Lo metemos en el buffer y lo procesamos con el flujo de siempre.
+      mensajesBuffer.set(from, {
+        mensajes: [textos.join("\n")],
+        lastMsg,
+        nombreCliente,
+        timer: null
+      });
+      await procesarBuffer(from);
+
+      // Pausa entre chats para no saturar WhatsApp ni Claude.
+      await new Promise(r => setTimeout(r, 4000));
+    } catch (e) {
+      console.error(`Error procesando no leídos de ${from}:`, e && e.message ? e.message : e);
+    }
+  }
+
+  console.log("🌅 Repaso de no leídos terminado.");
 }
 
 // ======================================
