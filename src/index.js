@@ -118,24 +118,10 @@ const client = new Client({
   }
 });
 
-// ======================================
-// 🆕 APAGADO AUTOMÁTICO FUERA DE HORARIO (ahorro de RAM)
-// El lavadero atiende L-S de 9 a 18. El bot se apaga solo a las 18:00 (ARG)
-// para no pagar memoria las 24hs. Railway lo vuelve a prender a las 9:00 con
-// el Cron configurado en Settings. La sesión queda guardada en el Volume,
-// así que NO pide QR de nuevo al volver a arrancar.
-// ======================================
-const HORA_CIERRE_ARG = 18; // se apaga a las 18:00 hora Argentina
-
-setInterval(() => {
-  const ahora = new Date();
-  // Railway corre en UTC; Argentina es UTC-3 (sin horario de verano).
-  const horaArg = (ahora.getUTCHours() - 3 + 24) % 24;
-  if (horaArg >= HORA_CIERRE_ARG) {
-    console.log(`🌙 Son las ${horaArg}hs ARG (fuera de horario). Apagando para ahorrar recursos...`);
-    process.exit(0); // salida limpia → Railway NO lo reinicia hasta el próximo Cron
-  }
-}, 60 * 1000); // chequea cada minuto
+// NOTA: el apagado automático de las 18hs se quitó. El bot ahora corre 24/7
+// (modo estable). Para volver a un apagado por horario en el futuro, hay que
+// hacerlo con cierre limpio de WhatsApp (client.destroy) para no corromper la
+// sesión, no con un process.exit en seco.
 
 let clientReady = false;
 let qrActual = null;
