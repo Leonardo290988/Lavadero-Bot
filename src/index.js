@@ -72,6 +72,13 @@ const client = new Client({
   // Si montás un Volume y ponés WWEBJS_DATA_PATH=/data/.wwebjs_auth, la sesión persiste.
   authStrategy: new LocalAuth({ dataPath: DATA_PATH }),
 
+  // 🆕 User-Agent de un Chrome MODERNO. Por defecto la librería se identifica
+  // como Chrome 101 (de 2022), y WhatsApp Web ya no lo acepta: le muestra una
+  // pantalla de "actualizá el navegador" y nunca carga la app (autentica pero
+  // nunca llega a "listo"). Con un UA actual, WhatsApp lo deja cargar normal.
+  userAgent:
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+
   // NOTA: se quitó el webVersionCache remoto. Descargaba un archivo de versión
   // de WhatsApp Web desde GitHub al arrancar, y esa descarga colgaba el inicio
   // (no llegaba ni a generar el QR). Sin esto, whatsapp-web.js usa la versión
