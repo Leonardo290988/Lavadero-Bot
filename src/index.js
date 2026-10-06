@@ -122,6 +122,34 @@ let clientReady = false;
 let qrActual = null;
 let botStartTime = Date.now();
 
+// ======================================
+// 🩺 LOGS DE DIAGNÓSTICO DE ARRANQUE
+// Muestran EXACTAMENTE hasta dónde llega la conexión, para no quedar a ciegas
+// cuando se cuelga. Se pueden sacar una vez que todo ande estable.
+// ======================================
+client.on("loading_screen", (percent, message) => {
+  console.log(`⏳ [diag] Cargando WhatsApp Web: ${percent}% - ${message}`);
+});
+client.on("authenticated", () => {
+  console.log("🔑 [diag] AUTENTICADO ok (sesión/QR aceptados).");
+});
+client.on("auth_failure", (msg) => {
+  console.error("❌ [diag] FALLO DE AUTENTICACIÓN:", msg);
+});
+client.on("change_state", (state) => {
+  console.log("🔀 [diag] Cambio de estado:", state);
+});
+
+// Latido cada 30s mientras no conecta, para confirmar que el proceso sigue vivo
+// y ver si llegó a generar el QR o no.
+let diagCount = 0;
+const diagInterval = setInterval(() => {
+  if (clientReady) { clearInterval(diagInterval); return; }
+  diagCount++;
+  console.log(`⌛ [diag] ${diagCount * 30}s y sigue sin conectar (clientReady=false, QR=${qrActual ? "SÍ generado" : "NO generado aún"})`);
+  if (diagCount >= 10) { console.log("⌛ [diag] 5 min sin conectar, corto el latido."); clearInterval(diagInterval); }
+}, 30000);
+
 client.on("qr", async (qr) => {
   console.log("QR recibido, escanea con WhatsApp");
   qrcode.generate(qr, { small: true });
