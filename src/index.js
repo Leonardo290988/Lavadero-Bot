@@ -94,6 +94,11 @@ const client = new Client({
   puppeteer: {
     headless: true,
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+    // 🆕 Más tiempo de espera para operaciones internas de Chromium. Al vincular
+    // una sesión nueva, WhatsApp sincroniza mucho historial y el valor por
+    // defecto (3 min) se queda corto → tira "Runtime.callFunctionOn timed out"
+    // y nunca llega a "conectado". Lo subimos a 5 min para que el sync termine.
+    protocolTimeout: 300000,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -103,7 +108,12 @@ const client = new Client({
       "--no-zygote",
       // ❌ "--single-process" ELIMINADO: es inestable con Chromium headless y
       // provoca los errores "Execution context was destroyed" y desconexiones.
-      "--disable-gpu"
+      "--disable-gpu",
+      // 🆕 Flags para que Chromium use menos memoria durante el sync pesado.
+      "--disable-extensions",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding"
     ]
   }
 });
