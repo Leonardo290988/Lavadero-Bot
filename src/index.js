@@ -80,7 +80,7 @@ const client = new Client({
   webVersionCache: {
     type: "remote",
     remotePath:
-      "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1023810332.html",
+      "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1049476576-alpha.html",
   },
 
   // 🆕 Si WhatsApp abre la sesión en otro lado, tomamos el control en vez de
