@@ -76,8 +76,18 @@ const client = new Client({
   // como Chrome 101 (de 2022), y WhatsApp Web ya no lo acepta: le muestra una
   // pantalla de "actualizá el navegador" y nunca carga la app (autentica pero
   // nunca llega a "listo"). Con un UA actual, WhatsApp lo deja cargar normal.
+  // (Actualizado a una versión reciente: si queda muy viejo, WhatsApp vuelve
+  // a mostrar "actualizá el navegador" y la página nunca termina de cargar.)
   userAgent:
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+
+  // 🆕 No usar ninguna versión de WhatsApp Web guardada en caché: siempre la
+  // que WhatsApp sirve en vivo. Una copia vieja en caché cuelga el arranque.
+  webVersionCache: { type: "none" },
+
+  // 🆕 Más tiempo para que cargue WhatsApp Web al arrancar. Con 30s, en Railway
+  // a veces no llega y tira "Waiting failed: 30000ms exceeded".
+  authTimeoutMs: 120000,
 
   // NOTA: se quitó el webVersionCache remoto. Descargaba un archivo de versión
   // de WhatsApp Web desde GitHub al arrancar, y esa descarga colgaba el inicio
@@ -101,13 +111,15 @@ const client = new Client({
     // defecto (3 min) se queda corto → tira "Runtime.callFunctionOn timed out"
     // y nunca llega a "conectado". Lo subimos a 5 min para que el sync termine.
     protocolTimeout: 300000,
+    // 🆕 Tiempo máximo para que abra Chromium (antes 30s por defecto)
+    timeout: 120000,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-accelerated-2d-canvas",
       "--no-first-run",
-      "--no-zygote",
+      // ❌ "--no-zygote" ELIMINADO: con Chromium nuevo puede colgar el arranque.
       // ❌ "--single-process" ELIMINADO: es inestable con Chromium headless y
       // provoca los errores "Execution context was destroyed" y desconexiones.
       "--disable-gpu",
@@ -1346,7 +1358,11 @@ function iniciarCliente() {
     if (intentosArranque < 5) {
       const esperaMs = 15000;
       console.log(`🔄 Reintentando en ${esperaMs / 1000}s...`);
-      setTimeout(() => {
+      setTimeout(async () => {
+        // 🆕 Cerrar el Chromium del intento fallido ANTES de reintentar.
+        // Si no, cada reintento deja un Chromium viejo abierto comiendo RAM
+        // (y además bloquea el perfil para el intento nuevo).
+        try { await client.destroy(); } catch (e) { /* ya estaba cerrado */ }
         limpiarLocksChromium(DATA_PATH);
         iniciarCliente();
       }, esperaMs);
