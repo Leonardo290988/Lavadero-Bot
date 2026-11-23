@@ -19,7 +19,7 @@ class Broadcast extends Base {
          * ID that represents the chat
          * @type {object}
          */
-        this.id = data.id;
+        this.id = Base._normalizeId(data.id);
 
         /**
          * Unix timestamp of last status
@@ -43,7 +43,7 @@ class Broadcast extends Base {
          * Messages statuses
          * @type {Message[]}
          */
-        this.msgs = data.msgs?.map(msg => new Message(this.client, msg));
+        this.msgs = data.msgs?.map((msg) => new Message(this.client, msg));
 
         return super._patch(data);
     }
@@ -63,7 +63,6 @@ class Broadcast extends Base {
     getContact() {
         return this.client.getContactById(this.id._serialized);
     }
-
 }
 
 module.exports = Broadcast;
