@@ -87,11 +87,9 @@ const client = new Client({
   // genera el QR ("Waiting failed"). Fijamos una versión anterior que sí anda.
   // Se puede cambiar sin tocar código con la variable WA_WEB_VERSION en Railway.
   // Cuando salga una versión de whatsapp-web.js que lo arregle, se saca esto.
-  webVersion: process.env.WA_WEB_VERSION || "2.3000.1054966512-alpha",
-  webVersionCache: {
-    type: "remote",
-    remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html"
-  },
+  // (La fijación la hace el bloque "VERSIÓN FIJADA" más abajo, que reemplaza
+  // al de la librería porque el de la librería no cubre /login/.)
+  webVersionCache: { type: "none" },
 
   // 🆕 Más tiempo para que cargue WhatsApp Web al arrancar. Con 30s, en Railway
   // a veces no llega y tira "Waiting failed: 30000ms exceeded".
@@ -139,6 +137,53 @@ const client = new Client({
     ]
   }
 });
+
+// ======================================
+// 📌 VERSIÓN FIJADA DE WHATSAPP WEB (parche 23/11/2026)
+// WhatsApp Web 2.3000.1055852612 redirige a /login/ y whatsapp-web.js nunca
+// genera el QR. Servimos una versión anterior en TODA navegación a
+// web.whatsapp.com (incluida /login/), y salteamos el service worker de
+// WhatsApp, que si no sirve la versión nueva desde la caché del perfil.
+// Se puede cambiar la versión con la variable WA_WEB_VERSION en Railway.
+// ======================================
+const WA_WEB_VERSION = process.env.WA_WEB_VERSION || "2.3000.1054966512-alpha";
+const WA_WEB_URL = `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${WA_WEB_VERSION}.html`;
+
+client.initWebVersionCache = async function () {
+  const page = this.pupPage;
+
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame()) console.log("🧭 [diag] Página:", frame.url());
+  });
+
+  let html = null;
+  try {
+    const r = await fetch(WA_WEB_URL);
+    if (r.ok) html = await r.text();
+    else console.error(`⚠️ [diag] No se pudo bajar la versión fijada (HTTP ${r.status})`);
+  } catch (e) {
+    console.error("⚠️ [diag] Error bajando la versión fijada:", e && e.message ? e.message : e);
+  }
+  if (!html) {
+    console.log("⚠️ [diag] Sigo con la versión de WhatsApp Web en vivo");
+    return;
+  }
+  console.log(`📌 [diag] WhatsApp Web fijado en ${WA_WEB_VERSION} (${html.length} bytes)`);
+
+  try { await page.setBypassServiceWorker(true); } catch (e) { /* no crítico */ }
+  await page.setRequestInterception(true);
+  page.on("request", (req) => {
+    try {
+      if (req.isInterceptResolutionHandled && req.isInterceptResolutionHandled()) return;
+      const url = req.url();
+      if (req.isNavigationRequest() && req.resourceType() === "document" &&
+          url.startsWith("https://web.whatsapp.com/")) {
+        return req.respond({ status: 200, contentType: "text/html", body: html });
+      }
+      req.continue();
+    } catch (e) { /* ya resuelta */ }
+  });
+};
 
 // NOTA: el apagado automático de las 18hs se quitó. El bot ahora corre 24/7
 // (modo estable). Para volver a un apagado por horario en el futuro, hay que
@@ -1362,6 +1407,7 @@ function iniciarCliente() {
   client.initialize().catch(err => {
     console.error(`❌ Falló el arranque del cliente (intento ${intentosArranque}):`,
       err && err.message ? err.message : err);
+    try { console.log("🧭 [diag] Página al fallar:", client.pupPage && client.pupPage.url()); } catch (e) {}
 
     if (intentosArranque < 5) {
       const esperaMs = 15000;
