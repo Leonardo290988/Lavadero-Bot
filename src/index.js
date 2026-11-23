@@ -81,9 +81,17 @@ const client = new Client({
   userAgent:
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
 
-  // 🆕 No usar ninguna versión de WhatsApp Web guardada en caché: siempre la
-  // que WhatsApp sirve en vivo. Una copia vieja en caché cuelga el arranque.
-  webVersionCache: { type: "none" },
+  // 🆕 VERSIÓN FIJA DE WHATSAPP WEB (parche temporal, 23/11/2026)
+  // La versión nueva de WhatsApp Web (2.3000.1055852612) manda las sesiones sin
+  // loguear a /login/ y whatsapp-web.js se queda esperando para siempre: nunca
+  // genera el QR ("Waiting failed"). Fijamos una versión anterior que sí anda.
+  // Se puede cambiar sin tocar código con la variable WA_WEB_VERSION en Railway.
+  // Cuando salga una versión de whatsapp-web.js que lo arregle, se saca esto.
+  webVersion: process.env.WA_WEB_VERSION || "2.3000.1054966512-alpha",
+  webVersionCache: {
+    type: "remote",
+    remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html"
+  },
 
   // 🆕 Más tiempo para que cargue WhatsApp Web al arrancar. Con 30s, en Railway
   // a veces no llega y tira "Waiting failed: 30000ms exceeded".
