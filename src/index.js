@@ -246,8 +246,12 @@ client.on("disconnected", (reason) => {
   // solos en vez de quedarnos esperando a que alguien reinicie el servicio.
   // (Si el motivo es LOGOUT, va a pedir QR nuevo; si fue un corte pasajero,
   // se reconecta solo con la sesión guardada.)
-  setTimeout(() => {
-    console.log("🔄 Intentando reconectar...");
+  // 🆕 Antes de reconectar cerramos el Chromium viejo. Si no, cada desconexión
+  // dejaba un Chromium huérfano abierto y la RAM se duplicaba (1+ GB).
+  setTimeout(async () => {
+    console.log("🔄 Cerrando Chromium viejo e intentando reconectar...");
+    try { await client.destroy(); } catch (e) { /* ya estaba cerrado */ }
+    limpiarLocksChromium(DATA_PATH);
     client.initialize().catch(err => {
       console.error("Error al reconectar:", err && err.message ? err.message : err);
     });
